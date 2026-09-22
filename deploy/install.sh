@@ -1,14 +1,32 @@
 #!/usr/bin/env bash
 #
-# 一键部署。在服务器上、仓库目录里跑：
+# 首次部署脚本：把整个站点从「一份代码」变成「一个能访问的网站」。
+# 在服务器上、仓库目录里跑：
+#
 #   sudo bash deploy/install.sh
 #
 # 想无人值守就把答案先放进环境变量：
+#
 #   sudo DOMAIN=resume.example.com ADMIN_PASSWORD='你的密码' EMAIL=you@example.com \
 #        bash deploy/install.sh
 #
-# 脚本可以重复跑：已经装好的部分会跳过，data.json 和 uploads 不会被覆盖。
+# 它会做完这些事：
+#   1. 装系统依赖：nginx、Node.js 20、certbot（要 HTTPS 才装）
+#   2. 把代码放到 /opt/resume（已经在那儿就跳过）
+#   3. 生成 server/.env，写上后台密码和一个随机的 SESSION_SECRET，权限 600
+#   4. npm install --omit=dev
+#   5. 铺一份示例 data.json（已经有了就不动）
+#   6. 装 systemd 服务 resume-api 并启动，跑一次 /api/health
+#   7. 写 nginx 站点配置、去掉默认站点、reload
+#   8. 域名解析好的话签一张 Let's Encrypt 证书并开启 80 → 443 跳转
+#   9. 打印前台 / 后台地址和后台密码
+#
+# 可以重复跑：已经装好的部分会跳过，data.json 和 web/uploads/ 不会被覆盖。
 # 装完之后日常更新用 deploy/deploy.sh，那个只拉代码 + 重启服务。
+#
+# 只在 Debian / Ubuntu 上测过（apt + systemd + nginx 的 sites-available 布局）。
+# CentOS / RHEL / AlmaLinux / Arch / macOS 请照着 README 的「手动版」做，
+# 或者自己把 apt-get、systemd 单元、nginx 路径这几处换成本系统的写法。
 
 set -euo pipefail
 
@@ -55,18 +73,19 @@ log "准备部署到 $APP_DIR"
 ask DOMAIN "域名或公网 IP（nginx 的 server_name）"
 [ -n "$DOMAIN" ] || die "必须给一个域名或 IP。"
 
-ask_secret ADMIN_PASSWORD "后台登录密码（回车则随机生成一个）"
-if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="$(openssl rand -base64 18 2>/dev/null | tr -d '/+=' || true)"
-    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=')}"
-    GENERATED_PASSWORD=1
-fi
+# 回车就用 123456。图省事可以，但站点是公开的，后台谁都能登 ——
+# 真上线的话强烈建议在这里填一个自己的密码，或者装完去改 server/.env。
+DEFAULT_PASSWORD=123456
+ask_secret ADMIN_PASSWORD "后台登录密码（回车用默认的 $DEFAULT_PASSWORD）"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$DEFAULT_PASSWORD}"
+
 # .env 是 KEY="value" 这种格式，这几个字符会把文件写坏
 case "$ADMIN_PASSWORD" in
     *'"'*|*'\'*|*'$'*|*'`'*|*'#'*)
         die '密码里不要有 " \ $ ` # 这几个字符，换成字母数字组合。' ;;
 esac
-[ ${#ADMIN_PASSWORD} -ge 8 ] || die "密码太短了，至少 8 位。"
+[ ${#ADMIN_PASSWORD} -ge 6 ] || die "密码太短了，至少 6 位。"
+[ "$ADMIN_PASSWORD" = "$DEFAULT_PASSWORD" ] && WEAK_PASSWORD=1 || WEAK_PASSWORD=0
 
 # 只有「像域名」才申请证书；纯 IP 没法签，直接跳过
 WANT_HTTPS=0
@@ -84,7 +103,18 @@ fi
 log "安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg nginx >/dev/null
+apt-get install -y -qq ca-certificates curl gnupg openssl nginx >/dev/null
+
+# 系统防火墙。放行 SSH 再 enable，顺序反了会把自己关在门外。
+# 注意：这只管机器里的 ufw，云厂商控制台的**安全组**得你自己去开 80/443，
+# 阿里云腾讯云的实例默认只开 22，不开的话外面照样访问不到。
+if command -v ufw >/dev/null 2>&1; then
+    ufw allow OpenSSH >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+    ufw --force enable >/dev/null 2>&1 || true
+    ok "ufw 已放行 22 / 80 / 443"
+fi
 
 # node 18 起步：mupdf 和 express 都要它
 NODE_MAJOR=0
@@ -233,10 +263,9 @@ $(printf '\033[1;32m部署完成\033[0m')
 
     前台        $SCHEME://$DOMAIN/
     后台        $SCHEME://$DOMAIN/admin.html
-$(if [ "${GENERATED_PASSWORD:-0}" = "1" ]; then
-    printf '\n    \033[1;33m后台密码（随机生成的，记下来）: %s\033[0m\n' "$ADMIN_PASSWORD"
-    printf '    存在 %s/server/.env 里，也能自己改\n' "$APP_DIR"
-fi)
+    后台密码    $ADMIN_PASSWORD
+                （存在 $APP_DIR/server/.env，改完 systemctl restart $SERVICE）
+
     接下来      打开后台 → 登录 → 左边「简历 PDF」→ 传你的简历
                 姓名、简介、技能、作品会自动跟着简历更新
                 视频是独立的一块，在「视频」面板手动加，不受简历影响
@@ -245,3 +274,14 @@ fi)
     看日志      journalctl -u $SERVICE -f
 
 EOF
+
+if [ "$WEAK_PASSWORD" = "1" ]; then
+    cat <<EOF
+$(printf '\033[1;33m注意：后台密码还是默认的 %s。\033[0m' "$ADMIN_PASSWORD")
+    站点是公开的，知道这个默认值的人都能登进后台改内容。要改的话：
+
+        sudo sed -i 's/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD="你的新密码"/' $APP_DIR/server/.env
+        sudo systemctl restart $SERVICE
+
+EOF
+fi

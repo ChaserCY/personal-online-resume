@@ -47,6 +47,12 @@ deploy/
 └── resume-api.service    systemd 单元
 ```
 
+`deploy/install.sh` 只在 Ubuntu / Debian 上能用（apt + systemd + nginx 的
+`sites-available` 布局）。改它的时候别引入别的发行版的写法，也别假设有 rsync
+之类的额外工具 —— 用 `apt-get` / `tar` / `sed` 这些一定有的。要支持别的系统
+是另写一份，不是往这个脚本里加分支。`ADMIN_PASSWORD` 默认 `123456`，
+是故意的（本地和演示省事），脚本最后会提醒用户改。
+
 ## 数据流（改动前务必先理解这个）
 
 ```
@@ -137,8 +143,8 @@ pdf.js 会把数字全解析成 `\u0000`（邮箱变成 `someone@.com`、列表�
 ## 常用命令
 
 ```bash
-# 本地跑（会同时托管 web/ 和 API，访问 http://127.0.0.1:3001）
-cd server && cp .env.example .env   # 第一次要填密码
+# 本地跑（会同时托管 web/ 和 API，访问 http://127.0.0.1:3001，后台密码 123456）
+cd server && cp .env.example .env
 cd server && npm install && npm start
 
 # 检查前端语法（没有构建步骤，用 node 直接解析一遍）

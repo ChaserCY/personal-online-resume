@@ -196,12 +196,13 @@ CommonJS 里只能 `await import('mupdf')`。这个代价是值得的。
 
 ```bash
 cd server
-cp .env.example .env          # 打开填一个 ADMIN_PASSWORD
+cp .env.example .env          # 预置的后台密码是 123456，本地够用
 npm install
 npm start
 ```
 
-然后访问 <http://127.0.0.1:3001>，后台在 <http://127.0.0.1:3001>/admin.html。
+然后访问 <http://127.0.0.1:3001>，后台在 <http://127.0.0.1:3001>/admin.html，
+密码 `123456`（部署到公网前记得改，见[安全须知](#安全须知)）。
 
 `web/data/data.json` 是运行时内容、不在 git 里，所以刚 clone 下来是没有的 ——
 **后端启动时会自动从 `data.seed.json` 生成一份示例内容**，直接就能看到一个完整的站点，
@@ -219,7 +220,7 @@ node --check web/assets/main.js && node --check web/assets/admin.js
 
 ## 部署到服务器
 
-下面按 Ubuntu / Debian 写。**假设你已经有：**
+**假设你已经有：**
 
 - 一台能 SSH 的云服务器（1 核 1G 就够，这个站几乎不吃资源）
 - 一个**已完成 ICP 备案**、并解析到这台服务器公网 IP 的域名
@@ -234,19 +235,31 @@ git clone <你的仓库地址> /opt/resume
 sudo bash /opt/resume/deploy/install.sh
 ```
 
-脚本会问你三件事 —— 域名、后台密码（回车就随机生成一个）、邮箱（用来签 HTTPS 证书，
-留空则不配 HTTPS），然后自动做完下面 1～8 步的全部事情：
+脚本会问你三件事 —— 域名、后台密码（回车用默认的 `123456`）、邮箱
+（用来签 HTTPS 证书，留空则不配 HTTPS）。
 
-- 装 nginx、Node.js 20、certbot
-- 生成 `server/.env`，密码和 `SESSION_SECRET` 都是随机的，文件权限 `600`
-- `npm install --omit=dev`
-- 铺一份示例 `data.json`
-- 装 systemd 服务并启动，跑一次 `/api/health` 健康检查
-- 配 nginx、去掉默认站点、reload
-- 签 HTTPS 证书并开启 80 → 443 跳转
-- 最后把前台 / 后台地址和随机密码打印出来
+**`deploy/install.sh` 干什么**
 
-**可以重复跑**：已经装好的部分会跳过，`data.json` 和 `web/uploads/` 不会被覆盖。
+| 步骤 | 做的事 |
+|---|---|
+| 1 | 装系统依赖：nginx、Node.js 20（低于 18 就从 NodeSource 装）、openssl；要 HTTPS 才装 certbot |
+| 2 | 用 ufw 放行 22 / 80 / 443（先放 SSH 再 enable，免得把自己关在门外） |
+| 3 | 把代码放到 `/opt/resume`，排除 `.git`、`node_modules`、`.env`、`data.json`、`uploads` |
+| 4 | 生成 `server/.env`：后台密码 + 一个随机的 `SESSION_SECRET`，权限 `600`，属主 root |
+| 5 | `npm install --omit=dev` |
+| 6 | 铺一份示例 `data.json`，并把 `web/data`、`web/uploads`、`server/backups` 划给 `www-data` |
+| 7 | 写 systemd 单元（`ExecStart` 里的 node 路径按 `which node` 自动填）并启动，跑一次 `/api/health` |
+| 8 | 写 nginx 站点配置、去掉默认站点、`nginx -t` 通过后 reload |
+| 9 | 签 Let's Encrypt 证书并开启 80 → 443 跳转 |
+| 10 | 打印前台 / 后台地址和后台密码 |
+
+几个细节：
+
+- **可以重复跑**：已经装好的部分会跳过，`data.json` 和 `web/uploads/` 不会被覆盖。
+- 密码留在默认值 `123456` 时，最后会多打一段黄色的提醒 —— 后台是公开页面，真上线要改掉。
+- 有些小厂的机器没开 IPv6，`listen [::]:80` 会让 `nginx -t` 失败，脚本会自动去掉那行重试。
+- 证书签失败不算致命（多半是域名还没解析好），脚本会告诉你怎么单独重跑 certbot。
+- 如果服务器上已经有 `server/.env`，脚本不会动它，改密码得自己编辑。
 
 想无人值守就先把答案放进环境变量：
 
@@ -255,7 +268,19 @@ sudo DOMAIN=resume.example.com ADMIN_PASSWORD='你的密码' EMAIL=you@example.c
      bash /opt/resume/deploy/install.sh
 ```
 
-> 脚本只支持 Debian / Ubuntu。其它发行版照着下面手动做，步骤是一一对应的。
+**操作系统支持**
+
+`install.sh` 只在 **Ubuntu / Debian** 上测过，用的是 `apt-get` + `systemd` +
+nginx 的 `sites-available` 布局。CentOS / RHEL / AlmaLinux / Arch / macOS
+用不了这个脚本，两条路：
+
+1. 照着下面的[手动版](#手动版)一步步做，步骤和脚本是一一对应的；
+2. 或者自己转换脚本 —— 要改的就三处：`apt-get` 换成 `dnf` / `yum` / `pacman`，
+   systemd 单元和 nginx 配置的路径（RHEL 系是 `/etc/nginx/conf.d/`，
+   没有 `sites-enabled` 那一层），以及 Node.js 的安装方式。
+
+`deploy.sh`（日常更新）和 `web/`、`server/` 本身不依赖发行版，
+任何跑得动 Node.js 18+ 的 Linux 都能用。
 
 ### 手动版
 
@@ -321,17 +346,17 @@ cp .env.example .env
 nano .env
 ```
 
-至少改这两项：
-
-```ini
-ADMIN_PASSWORD="你的后台密码"
-SESSION_SECRET="一长串随机字符"
-```
-
-生成随机串：
+`.env.example` 里 `ADMIN_PASSWORD` 预置的是 `123456`，**上线前一定改掉** ——
+后台是公开可访问的页面，留着默认密码谁都能登进来改内容。
+`SESSION_SECRET` 单独设一个随机串（不设会退化成用密码派生，以后改密码会把所有登录态踢掉）：
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+```ini
+ADMIN_PASSWORD="你的后台密码"
+SESSION_SECRET="上一条命令输出的那串"
 ```
 
 装依赖：
@@ -534,7 +559,10 @@ sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
 - **后台密码只存在于 `server/.env`。** 校验在服务端做，前端拿到的只是一个签名 token。
   永远不要把密码写进 `web/` 里的任何文件。
 - **`.env` 不要提交进 git**（`.gitignore` 已经覆盖），也不要贴给任何人或 AI。
-- 部署完第一件事是把 `ADMIN_PASSWORD` 换掉，别用示例值。
+- **`ADMIN_PASSWORD` 的默认值是 `123456`，上线前必须改掉。** `install.sh` 和
+  `.env.example` 都用这个值，是为了本地跑起来少一步。后台是公网可访问的页面，
+  密码就是唯一的门 —— 不改的话，任何人试一下默认值就能改你站上的内容。
+  改法：编辑 `server/.env` 里的 `ADMIN_PASSWORD`，然后 `systemctl restart resume-api`。
 - 后台页面加了 `X-Robots-Tag: noindex`，不会被搜索引擎收录，但**这不等于访问控制** ——
   真正的门是登录。
 - 站点没有用户系统，只有你一个管理员。如果你要做多用户，得先加一层用户表，

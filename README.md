@@ -514,6 +514,11 @@ sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
 
 ### 已知待办
 
+- **`resume` 里的内容大部分没有在前台显示。** 目前前台只渲染了
+  `resume.target`（求职意向那条信息条）。`resume.contact`、`resume.education`、
+  `resume.projects`、`resume.activities` 都能在后台编辑、也会被简历 PDF 同步写入，
+  但前台没有对应的板块，等于只存不显。想用起来的话，在 `index.html` 加一个
+  `<section>`、在 `main.js` 的 `render()` 里加一段渲染即可，数据都是现成的。
 - 前台在深色模式下会闪一下白屏：主题是在 `main.js` 里应用的，而脚本在 `<body>` 末尾。
   修法是在 `<head>` 里加一段内联脚本提前设置 `data-theme`。
 - 没有任何自动化测试。站点小，靠人肉点一遍。

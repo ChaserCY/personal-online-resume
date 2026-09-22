@@ -162,18 +162,17 @@
                 const displayVal = link.url.replace(/^mailto:/, '').replace(/^tel:/, '');
                 return `<div class="social-item" onclick="toggleSocial(this)">
                     <span class="social-name">${link.name}</span>
-                    <span class="social-value">${displayVal}</span>
+                    <span class="social-reveal"><span class="social-value">${displayVal}</span></span>
                 </div>`;
             }).join('');
         }
 
         function toggleSocial(el) {
-            const val = el.querySelector('.social-value');
-            // Close all other open social values
-            document.querySelectorAll('.social-value.show').forEach(v => {
-                if (v !== val) v.classList.remove('show');
-            });
-            val.classList.toggle('show');
+            // 展开动画由 .social-item.open 驱动（见 style.css），
+            // 所以状态挂在 item 上，value 只负责显示内容
+            const wasOpen = el.classList.contains('open');
+            document.querySelectorAll('.social-item.open').forEach(item => item.classList.remove('open'));
+            el.classList.toggle('open', !wasOpen);
         }
 
         // Modal Logic

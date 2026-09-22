@@ -340,6 +340,18 @@
             margin-bottom: 0.4rem;
         }
 
+        /* 面板顶部的说明条，例如「现在显示的是示例内容」 */
+        .form-hint {
+            margin-bottom: 1rem;
+            font-size: 0.82rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            background: rgba(66, 133, 244, 0.08);
+            border-left: 3px solid var(--accent-blue);
+            border-radius: var(--radius-sm);
+            padding: 0.7rem 0.9rem;
+        }
+
         .form-input, .form-textarea, .form-select {
             width: 100%;
             padding: 0.65rem 0.9rem;

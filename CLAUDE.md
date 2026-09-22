@@ -27,9 +27,10 @@ web/                      静态站点，nginx 直接托管
 │   ├── style.css         前台样式
 │   ├── main.js           前台逻辑：读 data.json → 渲染页面
 │   ├── admin.css         后台样式
-│   └── admin.js          后台逻辑：登录、编辑、保存
+│   ├── admin.js          后台逻辑：登录、编辑、保存
+│   └── favicon.svg       站点图标
 ├── data/
-│   ├── data.seed.json    初始内容模板（被 git 跟踪）
+│   ├── data.seed.json    初始内容模板（被 git 跟踪，虚构示例）
 │   └── data.json         线上真实内容（被 git 忽略，见下）
 └── uploads/              后台传的图片（被 git 忽略）
 
@@ -40,9 +41,10 @@ server/
 └── .env                  密钥，不进 git
 
 deploy/
+├── install.sh            首次部署的一键安装脚本（Debian / Ubuntu）
+├── deploy.sh             日常更新：拉代码 + 重启服务
 ├── nginx.conf            站点配置
-├── resume-api.service    systemd 单元
-└── deploy.sh             服务器上的一键更新脚本
+└── resume-api.service    systemd 单元
 ```
 
 ## 数据流（改动前务必先理解这个）
@@ -102,6 +104,18 @@ PUT /api/data  ──Bearer token──▶  server/index.js
   匹配上的只刷新描述和技术标签，图标 / 截图 / 外链一律保留 ——
   那些是站点特有的，简历里没有，重建会把它们弄丢。
 
+另外三条和「示例内容」有关的规矩，都是为了让新用户传完 PDF 后看到的是自己的东西：
+
+- **`sample: true` 是「这是虚构示例」的标记。** `data.seed.json` 里的 4 个作品
+  和整个 `profile` 都带着它。同步时带标记的作品卡片会被删掉、带标记的 `profile`
+  允许被拼出来的副标题覆盖。在后台编辑过之后（`saveGame()` / `saveProfile()`）
+  标记就被删掉了，那张卡 / 那份资料从此归用户，同步不再动它。
+  新增示例内容时记得带上这个标记。
+- **简历项目匹配不上就新建卡片**，不要只写进 `resume.projects` 就完事 ——
+  否则新用户的作品区永远是空的。新建的卡片图标用 🎮，截图和外链留空。
+- **技能分类以简历为准**（`applyResumePatch` 里的 `next`）：简历里有的保留、只刷新
+  说明文字，简历里没有的删掉。旧的「只增不减」写法会让示例分类一直留在线上。
+
 改解析逻辑时注意：**别换回 pdf.js**。这份简历的加粗字体没有可用的 ToUnicode 映射，
 pdf.js 会把数字全解析成 `\u0000`（邮箱变成 `someone@.com`、列表编号消失），
 而且会把「面」解析成康熙部首「⾯」。mupdf 会回退到字体自带的 cmap，两个问题都没有。
@@ -130,7 +144,10 @@ cd server && npm install && npm start
 # 检查前端语法（没有构建步骤，用 node 直接解析一遍）
 node --check web/assets/main.js && node --check web/assets/admin.js
 
-# 服务器上更新
+# 服务器上首次部署
+sudo bash /opt/resume/deploy/install.sh
+
+# 服务器上日常更新
 sudo bash /opt/resume/deploy/deploy.sh
 
 # 看后端日志
@@ -149,6 +166,8 @@ journalctl -u resume-api -f
 | 改坏了 data.json | 上一版在 `server/backups/data.json.bak`，直接 `cp` 回去 |
 | 上传简历后提示"内容没能识别" | PDF 是扫描件（图片）或者排版变了。用 `node -e "require('./server/resume-parse').extractRows(require('fs').readFileSync('x.pdf')).then(r=>console.log(r.map(x=>x.text).join('\n')))"` 看看认出来的是什么 |
 | 简历内容同步错位 | `resume-parse.js` 的章节识别靠标题文字 + 缩进位置。换个模板要调 `SECTION_HEADINGS` |
+| 首页还挂着「张三」「星轨回响」 | seed 的示例内容没被清掉。检查 `data.seed.json` 里 `profile` 和各作品的 `sample: true` 还在不在，以及 `applyResumePatch` 里的删除分支 |
+| 访客下载到的是一串数字文件名 | `main.js` 里给 `#resume-download` 设 `download` 属性的那段；只在同源时生效 |
 
 ## 还没做的事
 

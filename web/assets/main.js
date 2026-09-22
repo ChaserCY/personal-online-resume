@@ -66,8 +66,14 @@
 
             // 简历 PDF 下载按钮：地址由后台配置，没配就不显示
             const heroActions = document.getElementById('hero-actions');
+            const dlBtn = document.getElementById('resume-download');
             if (p.resumePdf) {
-                document.getElementById('resume-download').href = p.resumePdf;
+                dlBtn.href = p.resumePdf;
+                // 上传的文件名是时间戳（如 1790081750725-24cb6336.pdf），
+                // 不覆盖的话访客下到手的就是这串数字。download 属性只在同源时生效，
+                // 简历正好是同源的 ./uploads/xxx.pdf。
+                const who = (p.name || '').replace(/[\\/:*?"<>|]/g, '').trim();
+                dlBtn.setAttribute('download', who ? `${who}-简历.pdf` : '简历.pdf');
                 heroActions.style.display = '';
             } else {
                 heroActions.style.display = 'none';

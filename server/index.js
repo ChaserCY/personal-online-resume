@@ -126,6 +126,32 @@ async function writeDataFile(payload) {
   return Buffer.byteLength(json);
 }
 
+/**
+ * 首次启动时把 data.seed.json 复制成 data.json。
+ *
+ * data.json 是运行时的内容，不进 git，所以刚 clone 下来的仓库里没有它。
+ * 没有它前台就是一具空壳（没有名字、没有作品），用户会以为项目坏了。
+ * 这里补一份示例内容，让「clone 完直接 npm start」就能看到一个完整站点，
+ * 之后后台一保存就覆盖掉了。
+ */
+async function ensureDataFile() {
+  const SEED_FILE = path.join(WEB_DIR, 'data', 'data.seed.json');
+  try {
+    await fsp.access(DATA_FILE);
+    return;
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
+  try {
+    await fsp.mkdir(path.dirname(DATA_FILE), { recursive: true });
+    await fsp.copyFile(SEED_FILE, DATA_FILE);
+    console.log('[resume] 没有 data.json，已从 data.seed.json 生成一份示例内容');
+  } catch (e) {
+    // 生成失败不致命：后台第一次保存时 writeDataFile 会自己建出来
+    console.error('[warn] 生成初始 data.json 失败（后台保存时会自动创建）:', e.message);
+  }
+}
+
 // ---------- 应用 ----------
 
 const app = express();
@@ -256,8 +282,10 @@ app.post('/api/resume/parse', requireAuth, async (req, res) => {
 // 本地开发用：生产环境这些静态文件由 nginx 直接发，不会走到这里
 app.use(express.static(WEB_DIR, { extensions: ['html'] }));
 
-app.listen(PORT, HOST, () => {
-  console.log(`[resume] API 监听 http://${HOST}:${PORT}`);
-  console.log(`[resume] 数据文件 ${DATA_FILE}`);
-  console.log(`[resume] 静态目录 ${WEB_DIR}`);
+ensureDataFile().then(() => {
+  app.listen(PORT, HOST, () => {
+    console.log(`[resume] API 监听 http://${HOST}:${PORT}`);
+    console.log(`[resume] 数据文件 ${DATA_FILE}`);
+    console.log(`[resume] 静态目录 ${WEB_DIR}`);
+  });
 });

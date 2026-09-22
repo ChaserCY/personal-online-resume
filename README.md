@@ -64,23 +64,25 @@ web/                      静态站点，nginx 直接托管这一层
 │   ├── style.css         前台样式
 │   ├── main.js           前台逻辑：读 data.json → 渲染页面
 │   ├── admin.css         后台样式
-│   └── admin.js          后台逻辑：登录、编辑、保存、PDF 上传与同步
+│   ├── admin.js          后台逻辑：登录、编辑、保存、PDF 上传与同步
+│   └── favicon.svg       站点图标（内联 SVG，没有二进制文件）
 ├── data/
-│   ├── data.seed.json    初始内容模板（在 git 里）
+│   ├── data.seed.json    初始内容模板（在 git 里，虚构示例）
 │   └── data.json         线上真实内容（不在 git 里，由后台写入）
 └── uploads/              后台传的图片和简历 PDF（不在 git 里）
 
 server/                   后端：登录校验 + 写 data.json + 收文件 + 解析简历 PDF
-├── index.js              HTTP 接口，约 280 行
+├── index.js              HTTP 接口，约 300 行
 ├── resume-parse.js       简历 PDF → 站点内容，约 390 行
 ├── package.json          依赖只有 express / dotenv / mupdf
 ├── .env                  密钥，不进 git
 └── backups/              每次写 data.json 前的自动备份（不在 git 里）
 
 deploy/
+├── install.sh            首次部署：一条命令装完（Debian / Ubuntu）
+├── deploy.sh             日常更新：拉代码 + 重启服务
 ├── nginx.conf            站点配置
-├── resume-api.service    systemd 单元
-└── deploy.sh             服务器上的一键更新脚本
+└── resume-api.service    systemd 单元
 ```
 
 ### 数据流
@@ -160,9 +162,18 @@ PUT /api/data  ──Bearer token──▶  server/index.js
 **作品卡片按标题匹配。** 简历里的「星轨回响(联机版)」会匹配到网站上的
 「星轨回响 (多人合作射击)」（`titleKey` 只取括号前的部分），
 匹配上就刷新描述和技术标签，图标、截图、外链保留 —— 那些是网站特有的，简历里没有。
-匹配不上的简历项目只会进 `resume.projects`，不会凭空生成作品卡片。
 
-**技能只同步说明文字**，标签保持手写的那份。
+匹配不上的简历项目**会直接新建一张卡**（图标用默认的 🎮，截图和外链留空，
+之后在后台补）。不建的话，第一次上传简历的人作品区会是空的。
+
+**示例卡片会被清掉。** `data.seed.json` 里的 4 个作品和整个 `profile` 都带
+`"sample": true`，第一次同步时删掉 —— 否则虚构的「星轨回响」会一直挂在你的作品区。
+在后台编辑过某张示例卡片后，`saveGame()` 会把标记去掉，那张卡就归你了，以后同步不会动它。
+副标题同理：简历里没有对应的东西，只在 `profile.sample` 还在时用
+「学校 · 专业 · 届别 | 求职意向」拼一句顶上；你自己改过之后就不再覆盖。
+
+**技能分类以简历为准。** 简历里有的分类保留下来、只刷新说明文字（标签是你手写的），
+简历里没有的分类删掉。新分类的标签留空 —— 从说明文字里抠关键词不可靠，手填比乱猜好。
 
 **同步前会自动备份**到 `server/backups/data.json.bak`。
 
@@ -192,11 +203,9 @@ npm start
 
 然后访问 <http://127.0.0.1:3001>，后台在 <http://127.0.0.1:3001>/admin.html。
 
-第一次跑 `web/data/data.json` 还不存在，先复制一份模板：
-
-```bash
-cp web/data/data.seed.json web/data/data.json
-```
+`web/data/data.json` 是运行时内容、不在 git 里，所以刚 clone 下来是没有的 ——
+**后端启动时会自动从 `data.seed.json` 生成一份示例内容**，直接就能看到一个完整的站点，
+不用手动复制。后台一保存就覆盖掉了。
 
 > 后端同时托管了 `web/` 静态目录，所以本地不需要装 nginx。
 
@@ -215,11 +224,42 @@ node --check web/assets/main.js && node --check web/assets/admin.js
 - 一台能 SSH 的云服务器（1 核 1G 就够，这个站几乎不吃资源）
 - 一个**已完成 ICP 备案**、并解析到这台服务器公网 IP 的域名
 
-全程大约 20 分钟。
+### 懒人版：一条命令
 
-### 0. 先把代码推到你的仓库
+```bash
+ssh 你的服务器
+sudo apt update && sudo apt install -y git
+sudo mkdir -p /opt/resume && sudo chown "$USER":"$USER" /opt/resume
+git clone <你的仓库地址> /opt/resume
+sudo bash /opt/resume/deploy/install.sh
+```
 
-服务器从 git 拉代码，所以本地改动得先推上去：
+脚本会问你三件事 —— 域名、后台密码（回车就随机生成一个）、邮箱（用来签 HTTPS 证书，
+留空则不配 HTTPS），然后自动做完下面 1～8 步的全部事情：
+
+- 装 nginx、Node.js 20、certbot
+- 生成 `server/.env`，密码和 `SESSION_SECRET` 都是随机的，文件权限 `600`
+- `npm install --omit=dev`
+- 铺一份示例 `data.json`
+- 装 systemd 服务并启动，跑一次 `/api/health` 健康检查
+- 配 nginx、去掉默认站点、reload
+- 签 HTTPS 证书并开启 80 → 443 跳转
+- 最后把前台 / 后台地址和随机密码打印出来
+
+**可以重复跑**：已经装好的部分会跳过，`data.json` 和 `web/uploads/` 不会被覆盖。
+
+想无人值守就先把答案放进环境变量：
+
+```bash
+sudo DOMAIN=resume.example.com ADMIN_PASSWORD='你的密码' EMAIL=you@example.com \
+     bash /opt/resume/deploy/install.sh
+```
+
+> 脚本只支持 Debian / Ubuntu。其它发行版照着下面手动做，步骤是一一对应的。
+
+### 手动版
+
+**0. 先把代码推到你的仓库** —— 服务器从 git 拉代码，本地改动得先推上去：
 
 ```bash
 git add -A
@@ -227,7 +267,7 @@ git commit -m "chore: 初始化我的简历站"
 git push origin master
 ```
 
-### 1. 放行端口（最容易漏的一步）
+#### 1. 放行端口（最容易漏的一步）
 
 去云厂商控制台的**安全组 / 防火墙**里放行 **80** 和 **443** 端口。
 阿里云、腾讯云的实例默认只开 22，不开 80 —— 装好了 nginx 外面也访问不到，
@@ -246,7 +286,7 @@ sudo ufw --force enable
 dig +short 你的域名
 ```
 
-### 2. 装环境
+#### 2. 装环境
 
 ```bash
 sudo apt update
@@ -261,7 +301,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-### 3. 拉代码
+#### 3. 拉代码
 
 ```bash
 sudo mkdir -p /opt/resume
@@ -273,7 +313,7 @@ cd /opt/resume
 > 私有仓库的话，先在服务器上生成 SSH key 加到 GitHub / Gitee，
 > 然后把 clone 地址换成 `git@...`。服务器在国内建议用 Gitee，拉取更快。
 
-### 4. 配置后端密钥
+#### 4. 配置后端密钥
 
 ```bash
 cd /opt/resume/server
@@ -300,7 +340,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 npm install --omit=dev
 ```
 
-### 5. 起后端服务
+#### 5. 起后端服务
 
 ```bash
 sudo cp /opt/resume/deploy/resume-api.service /etc/systemd/system/
@@ -320,7 +360,7 @@ curl http://127.0.0.1:3001/api/health
 最常见的两个原因：`.env` 没填 `ADMIN_PASSWORD`，或者 `which node` 不是 `/usr/bin/node`
 （用 nvm 装的就会这样，改一下 service 文件里的 `ExecStart`）。
 
-### 6. 配 nginx
+#### 6. 配 nginx
 
 ```bash
 sudo cp /opt/resume/deploy/nginx.conf /etc/nginx/sites-available/resume
@@ -338,19 +378,20 @@ sudo systemctl reload nginx
 > nginx 只把 `/api/` 转发给 Node，其余全部由它自己发静态文件 ——
 > 所以后端进程绑在 `127.0.0.1`，外网碰不到。
 
-### 7. 初始化内容
+#### 7. 初始化内容
 
-服务器上还没有 `data.json`，铺一份模板进去：
+后端启动时发现没有 `data.json` 会自己从 `data.seed.json` 铺一份，所以这一步通常不用管。
+想手动来一份也行：
 
 ```bash
 sudo cp /opt/resume/web/data/data.seed.json /opt/resume/web/data/data.json
 sudo chown www-data:www-data /opt/resume/web/data/data.json
 ```
 
-这份模板是虚构示例。登录后台把「个人信息」改成你自己的，
-或者直接上传一份简历 PDF 让内容自动同步过来（见下节）。
+这份模板是虚构示例（张三）。后台的「个人信息」面板顶上会有一条提示告诉你现在还是示例内容。
+登录后台把内容改成你自己的，或者直接上传一份简历 PDF 让内容自动同步过来（见下节）。
 
-### 8. 上 HTTPS
+#### 8. 上 HTTPS
 
 域名已经备案、解析也生效了，配证书就是两条命令：
 
@@ -392,7 +433,10 @@ sudo certbot renew --dry-run
 - **视频管理不受影响**，同步流程完全不碰视频。
 - **作品卡片按标题匹配**，匹配上的只刷新描述和技术标签，
   图标、截图、外链都保留 —— 那些是网站特有的，简历里没有。
-- **技能只同步说明文字**，标签保持你手写的那份。
+  简历里有、网站上没有的项目会**自动新建一张卡片**（截图和外链留空，之后自己补）。
+- **示例作品会被清掉。** 第一次上传时，`data.seed.json` 里那 4 个虚构作品
+  （以及示例的昵称 / 副标题）会被你的真实内容替换掉。
+- **技能分类以简历为准**，简历里没有的分类会删掉；标签是你手写的，只刷新说明文字。
 - 同步前会把上一版内容存到 `server/backups/data.json.bak`。
 
 > **一个取舍**：简历受篇幅限制，写得比网页简略。同步之后，
@@ -406,6 +450,10 @@ sudo certbot renew --dry-run
 由此带来一个部署上的后果：**新服务器 clone 下来是没有 PDF 的**，
 `data.seed.json` 里 `resumePdf` 是空字符串，所以按钮默认不显示，不会出现点了 404 的情况。
 上传一次之后就有了，文件存在服务器的 `web/uploads/` 下。
+
+访客点「下载简历」拿到的文件名是 **`你的名字-简历.pdf`** ——
+上传的文件名是时间戳（`1790081750725-24cb6336.pdf`），不覆盖的话访客下到手就是这串数字。
+`main.js` 用 `download` 属性把它改掉了（同源才生效，简历正好是同源的 `./uploads/xxx.pdf`）。
 
 每次上传都会生成新文件名，**旧 PDF 不会自动删除**，会一直留在 `web/uploads/` 里。
 换得多了可以自己进去删掉不用的：

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>内容管理后台</title>
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -69,6 +70,10 @@
 
             <div class="form-section">
                 <div class="form-section-title">基本资料</div>
+                <div id="profile-sample-hint" class="form-hint" style="display:none;">
+                    现在显示的是示例内容。在左边「简历 PDF」里传一次你的简历，昵称、副标题、
+                    关于我、技能、作品都会自动换成你的；也可以直接在这里手改，改完这行提示就消失了。
+                </div>
                 <div class="form-grid">
                     <div class="form-group">
                         <label class="form-label">昵称</label>
@@ -84,7 +89,7 @@
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label">副标题</label>
-                        <input type="text" class="form-input" id="profile-subtitle" placeholder="个人主页副标题">
+                        <input type="text" class="form-input" id="profile-subtitle" placeholder="例如: 示例大学 · 软件工程 · 2027 届">
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label">个人简介（每段一行）</label>

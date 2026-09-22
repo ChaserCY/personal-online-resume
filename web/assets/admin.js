@@ -158,6 +158,7 @@
             document.getElementById('profile-subtitle').value = p.subtitle || '';
             document.getElementById('profile-about').value = (p.about || []).join('\n');
             document.getElementById('profile-resume-pdf').value = p.resumePdf || '';
+            document.getElementById('profile-sample-hint').style.display = p.sample ? '' : 'none';
             renderSkills();
             renderSocialLinks();
         }
@@ -275,6 +276,9 @@
             data.profile.subtitle = document.getElementById('profile-subtitle').value;
             data.profile.about = document.getElementById('profile-about').value.split('\n').filter(l => l.trim());
             data.profile.resumePdf = document.getElementById('profile-resume-pdf').value.trim();
+            // 自己动手改过就不再是示例了，去掉标记，
+            // 以后传简历不会再来覆盖副标题
+            delete data.profile.sample;
             save();
             showToast('已保存');
         }
@@ -384,7 +388,7 @@
                     <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
                         <span style="color:var(--text-tertiary);font-size:0.9rem;cursor:grab;">⠿</span>
                         <div style="min-width:0;">
-                            <div style="font-weight:600;font-size:0.9rem;">${g.icon || '🎮'} ${g.title}</div>
+                            <div style="font-weight:600;font-size:0.9rem;">${g.icon || '🎮'} ${g.title}${g.sample ? ' <span class="meta-tag" style="background:rgba(246,152,42,0.15);color:var(--accent-orange);" title="上传简历后会被自动移除">示例</span>' : ''}</div>
                             <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;">${(g.description || '').slice(0, 60)}</div>
                             <div class="data-item-meta" style="margin-top:0.3rem;">${(g.tech || []).map(t => `<span class="meta-tag">${t}</span>`).join('')}</div>
                         </div>
@@ -580,37 +584,85 @@
             }
 
             if (p.skills) {
-                // 只更新说明文字。标签是手工挑的关键词，简历里没有对应结构，覆盖了只会更差。
-                let n = 0;
+                // 分类以简历为准：简历里有的保留下来，标签是你手写的所以只刷新说明文字；
+                // 简历里没有的分类删掉 —— 否则示例里的分类会一直留在线上，越积越多。
+                // 新分类的标签留空：从说明文字里抠关键词不可靠，手填比乱猜好。
+                const next = {};
+                let kept = 0, added = 0;
                 for (const [cat, note] of Object.entries(p.skills)) {
-                    if (!note) continue;
-                    skillEntry(cat).note = note;
-                    n++;
+                    const old = (data.profile.skills || {})[cat];
+                    const oldTags = Array.isArray(old) ? old : (old && Array.isArray(old.tags) ? old.tags : []);
+                    const oldNote = old && typeof old.note === 'string' ? old.note : '';
+                    if (old) { next[cat] = { tags: oldTags, note: note || oldNote }; kept++; }
+                    else { next[cat] = { tags: [], note: note || '' }; added++; }
                 }
-                if (n) changed.push(`技能说明（${n} 类）`);
+                data.profile.skills = next;
+                changed.push(`技能（保留 ${kept} 类标签${added ? `，新建 ${added} 类` : ''}）`);
             }
 
             if (r.contact) { Object.assign(data.resume.contact, r.contact); changed.push('联系方式'); }
             if (r.target) { Object.assign(data.resume.target, r.target); changed.push('求职意向'); }
             if (r.education) { data.resume.education = r.education; changed.push('教育背景'); }
+
+            // 副标题简历里没有对应的东西，示例站点上那句「示例大学 · …」会一直挂在首页。
+            // 所以只要内容还是示例（profile.sample），就用教育背景 + 求职意向拼一句换掉；
+            // 你自己在「个人信息」里改过之后 sample 就没了，以后再传简历都不会覆盖你写的。
+            const edu = (r.education || [])[0];
+            if (edu && edu.school && data.profile.sample) {
+                const bits = [edu.school];
+                if (edu.major) bits.push(edu.major);
+                // 「2024-09 至 2028-06」取最后一个年份当届别；写「至今」的还没毕业，不猜
+                const years = (edu.year || '').match(/20\d{2}/g);
+                if (years && years.length && !/至今/.test(edu.year)) bits.push(`${years[years.length - 1]} 届`);
+                const pos = (r.target && r.target.position) || p.title;
+                data.profile.subtitle = bits.join(' · ') + (pos ? ` | ${pos}` : '');
+                changed.push('副标题');
+            }
+            delete data.profile.sample;
+
             if (r.activities) { data.resume.activities = r.activities; changed.push('在校经历'); }
             if (r.projects) { data.resume.projects = r.projects; changed.push('项目经历'); }
 
-            // 作品卡片：按标题找得到就刷新描述和技术栈，图标 / 截图 / 外链一律保留 ——
-            // 那些是站点特有的，简历里没有，重建会把它们弄丢
-            const games = data.games || [];
-            const matched = [];
-            for (const proj of r.projects || []) {
-                const key = titleKey(proj.name);
-                const game = games.find(g => titleKey(g.title) === key);
-                if (!game) continue;
-                game.description = proj.description;
-                if (proj.tech && proj.tech.length) game.tech = proj.tech;
-                matched.push(game.title);
+            // 作品卡片三件事：
+            //   1. 标了 sample 的示例卡片删掉 —— 不删的话虚构作品会一直留在线上，
+            //      上传完简历作品区还是别人的作品，这是最劝退的地方
+            //   2. 标题对得上的刷新描述和技术栈，图标 / 截图 / 外链保留
+            //      （那些是站点特有的，简历里没有，重建会弄丢）
+            //   3. 对不上的用简历里的项目直接建一张卡，截图和外链留空，之后再补
+            const matched = [], created = [], dropped = [];
+            if (r.projects) {
+                data.games = (data.games || []).filter(g => {
+                    if (!g.sample) return true;
+                    dropped.push(g.title);
+                    return false;
+                });
+                for (const proj of r.projects) {
+                    const key = titleKey(proj.name);
+                    const game = data.games.find(g => titleKey(g.title) === key);
+                    if (game) {
+                        game.description = proj.description;
+                        if (proj.tech && proj.tech.length) game.tech = proj.tech;
+                        matched.push(game.title);
+                    } else {
+                        data.games.push({
+                            id: Date.now() + data.games.length,
+                            title: proj.name,
+                            icon: '🎮',
+                            image: '',
+                            images: [],
+                            description: proj.description,
+                            tech: proj.tech || [],
+                            link: '',
+                        });
+                        created.push(proj.name);
+                    }
+                }
             }
-            if (matched.length) changed.push(`作品卡片（${matched.join('、')}）`);
+            if (matched.length) changed.push(`作品卡片刷新（${matched.join('、')}）`);
+            if (created.length) changed.push(`作品卡片新建（${created.join('、')}）`);
+            if (dropped.length) changed.push(`移除示例作品（${dropped.length} 个）`);
 
-            return { changed, matched };
+            return { changed, matched, created, dropped };
         }
 
         async function syncFromResumePdf(url) {
@@ -726,6 +778,9 @@
                 tech: getCurrentTechTags(),
                 link: document.getElementById('game-link').value
             };
+            // 编辑过的示例卡片就归你了，去掉 sample 标记，
+            // 免得下次上传简历时被当成示例删掉
+            delete gameData.sample;
             if (!data.games) data.games = [];
             if (id) data.games[parseInt(id)] = gameData;
             else data.games.push(gameData);

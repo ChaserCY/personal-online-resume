@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人简历 · 作品集</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+    <div class="bg-pattern">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+        <div class="shape shape-3"></div>
+        <div class="shape shape-4"></div>
+        <div class="shape shape-5"></div>
+    </div>
+    <div class="bg-glow"></div>
+
+    <nav>
+        <a href="#" class="logo" id="nav-logo">Online Resume</a>
+        <ul class="nav-links">
+            <li><a href="#about">关于我</a></li>
+            <li><a href="#games">作品</a></li>
+            <li><a href="#videos">视频</a></li>
+            <li><a href="./admin.html">管理</a></li>
+        </ul>
+        <button class="theme-toggle" onclick="toggleTheme()" aria-label="切换主题">
+            <svg id="theme-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+        </button>
+    </nav>
+
+    <main class="container">
+        <section class="hero" id="home">
+            <!-- 下面的文案会被 main.js 用 data.json 里的内容覆盖，留在这里只是给
+                 禁用 JS 或数据没加载出来时一个兜底，不用改 -->
+            <h1 id="hero-title">您好，我是 <span></span></h1>
+            <p id="hero-subtitle"></p>
+            <!-- 没有配 resumePdf 时保持隐藏，避免出现点了 404 的按钮 -->
+            <div class="hero-actions" id="hero-actions" style="display:none;">
+                <a class="btn btn-primary" id="resume-download" href="#" download>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:0.5rem;">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    <span>下载简历 PDF</span>
+                </a>
+            </div>
+        </section>
+
+        <section id="about">
+            <h2 class="section-title">关于我</h2>
+            <div id="job-target" class="job-target" style="display:none;"></div>
+            <div class="about-cards" id="about-cards"></div>
+        </section>
+
+        <section id="skills">
+            <h2 class="section-title">技能</h2>
+            <div class="skills-grid" id="skills-grid"></div>
+        </section>
+
+        <section id="games">
+            <h2 class="section-title">游戏作品集</h2>
+            <div class="grid" id="games-grid"></div>
+        </section>
+
+        <section id="videos">
+            <h2 class="section-title">视频展示</h2>
+            <div class="video-grid" id="videos-grid"></div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <div class="social-links" id="footer-social"></div>
+            <p style="color: var(--text-tertiary); font-size: 0.875rem;">© <span id="year"></span> <span id="footer-name"></span>. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <!-- Video Modal -->
+    <div class="modal-overlay" id="video-modal" onclick="closeVideoModal(event)">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="video-modal-title"></h3>
+                <button class="modal-close" onclick="closeVideoModal(null, true)">&times;</button>
+            </div>
+            <div class="modal-body" id="video-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Game Modal -->
+    <div class="modal-overlay" id="game-modal" onclick="closeModal(event)">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modal-title"></h3>
+                <button class="modal-close" onclick="closeModal(event, true)">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="./assets/main.js"></script>
+</body>
+</html>

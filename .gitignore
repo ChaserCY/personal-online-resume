@@ -1,0 +1,27 @@
+# 运行时数据 —— 故意不跟踪。
+# 后台在服务器上写的就是这个文件，如果跟踪了，下次 git pull 必然冲突。
+web/data/data.json
+web/uploads/
+
+# 服务器上的密钥和自动备份
+server/.env
+server/backups/
+server/node_modules/
+
+# 初始内容模板保留在 web/data/data.seed.json
+
+# PDF 不进仓库。简历源文件是个人资料，而且会频繁替换，
+# 塞进 git 只会让每次更新都留一份历史副本。
+*.pdf
+
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Claude Code 本机权限设置，不进仓库
+.claude/settings.local.json

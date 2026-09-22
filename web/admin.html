@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>内容管理后台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./assets/admin.css">
+</head>
+<body>
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+    <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="切换侧边栏">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+    </button>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">Portfolio Admin</div>
+            <div class="sidebar-subtitle">内容管理系统</div>
+        </div>
+
+        <nav class="nav-section">
+            <div class="nav-section-title">基本信息</div>
+            <div class="nav-item active" data-panel="profile">
+                <span class="nav-icon">👤</span><span>个人信息</span>
+            </div>
+        </nav>
+
+        <nav class="nav-section">
+            <div class="nav-section-title">内容管理</div>
+            <div class="nav-item" data-panel="videos">
+                <span class="nav-icon">🎬</span><span>视频管理</span>
+            </div>
+            <div class="nav-item" data-panel="games">
+                <span class="nav-icon">🎮</span><span>游戏作品</span>
+            </div>
+        </nav>
+
+        <nav class="nav-section">
+            <div class="nav-section-title">简历管理</div>
+            <div class="nav-item" data-panel="resume">
+                <span class="nav-icon">📄</span><span>我的简历</span>
+            </div>
+        </nav>
+
+        <nav class="nav-section">
+            <div class="nav-section-title">简历文件</div>
+            <div class="nav-item" data-panel="resume-pdf">
+                <span class="nav-icon">📎</span><span>简历 PDF</span>
+            </div>
+        </nav>
+
+        <a href="./" class="view-site-link">查看我的主页</a>
+        <button class="theme-toggle-admin" id="theme-toggle-btn" onclick="toggleTheme()">切换深色模式</button>
+        <button class="logout-btn" onclick="logout()">退出登录</button>
+    </aside>
+
+    <main class="main-content">
+        <!-- 个人信息 -->
+        <div class="panel active" id="panel-profile">
+            <div class="page-header">
+                <h1 class="page-title">个人信息</h1>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">基本资料</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">昵称</label>
+                        <input type="text" class="form-input" id="profile-name" placeholder="输入昵称">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">头像 Emoji</label>
+                        <input type="text" class="form-input" id="profile-avatar" placeholder="例如: 👨‍💻">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">标题</label>
+                        <input type="text" class="form-input" id="profile-title" placeholder="例如: 游戏开发者">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label">副标题</label>
+                        <input type="text" class="form-input" id="profile-subtitle" placeholder="个人主页副标题">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label">个人简介（每段一行）</label>
+                        <textarea class="form-textarea" id="profile-about" rows="4" placeholder="每段一行。写成「教育背景：某某大学…」会渲染成一张带标题的卡片；不写冒号就是普通段落"></textarea>
+                        <div style="font-size:0.8rem;color:var(--text-tertiary);margin-top:0.4rem;">
+                            技能相关的描述请填在下方「技能标签」各分类的说明框里，不要在这里重复一遍。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">简历 PDF</div>
+                <div class="form-group full-width">
+                    <label class="form-label">文件地址（留空则前台不显示下载按钮）</label>
+                    <input type="text" class="form-input" id="profile-resume-pdf" placeholder="./uploads/xxxx.pdf 或外部链接">
+                    <div style="font-size:0.8rem;color:var(--text-tertiary);margin-top:0.4rem;">
+                        要换简历请到左侧「简历 PDF」面板上传，这里只用来手填外部链接。
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">技能标签</div>
+                <div id="skills-container"></div>
+            </div>
+
+            <div class="form-section">
+                <div class="page-header" style="margin-bottom: 1rem;">
+                    <h2 class="page-title" style="font-size: 1.1rem;">社交链接</h2>
+                    <button class="btn btn-secondary btn-small" onclick="addSocialLink()">+ 添加</button>
+                </div>
+                <div id="social-links-container"></div>
+            </div>
+
+            <button class="btn btn-success" onclick="saveProfile()">保存更改</button>
+        </div>
+
+        <!-- 视频管理 -->
+        <div class="panel" id="panel-videos">
+            <div class="page-header">
+                <h1 class="page-title">视频管理</h1>
+            </div>
+            <div class="form-section">
+                <div class="form-section-title">添加视频</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">视频标题</label>
+                        <input type="text" class="form-input" id="video-title" placeholder="例如：作品实机演示">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">B站链接或 BV号</label>
+                        <input type="text" class="form-input" id="video-url" placeholder="例如：BV1TJ4y1f7PH 或完整B站视频链接">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">视频描述</label>
+                    <textarea class="form-input" id="video-desc" rows="3" placeholder="简要描述视频内容（选填）"></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="addVideo()">添加视频</button>
+            </div>
+            <div class="form-section" style="margin-top:1.5rem;">
+                <div class="form-section-title">视频列表</div>
+                <div class="data-list" id="videos-list"></div>
+            </div>
+        </div>
+
+        <!-- 游戏作品 -->
+        <div class="panel" id="panel-games">
+            <div class="page-header">
+                <h1 class="page-title">游戏作品</h1>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="openGameModal()">+ 添加作品</button>
+                </div>
+            </div>
+            <div class="data-list" id="games-list"></div>
+        </div>
+
+        <!-- 简历 -->
+        <div class="panel" id="panel-resume">
+            <div class="page-header">
+                <h1 class="page-title">简历管理</h1>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">联系方式</div>
+                <div class="form-grid">
+                    <div class="form-group"><label class="form-label">邮箱</label><input type="text" class="form-input" id="resume-email"></div>
+                    <div class="form-group"><label class="form-label">电话</label><input type="text" class="form-input" id="resume-phone"></div>
+                    <div class="form-group"><label class="form-label">所在地</label><input type="text" class="form-input" id="resume-location"></div>
+                    <div class="form-group"><label class="form-label">GitHub</label><input type="text" class="form-input" id="resume-github"></div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">求职意向</div>
+                <div class="form-grid">
+                    <div class="form-group"><label class="form-label">期望职位</label><input type="text" class="form-input" id="resume-target-position"></div>
+                    <div class="form-group"><label class="form-label">期望城市</label><input type="text" class="form-input" id="resume-target-city"></div>
+                    <div class="form-group"><label class="form-label">期望薪资</label><input type="text" class="form-input" id="resume-target-salary"></div>
+                    <div class="form-group"><label class="form-label">工作性质</label><input type="text" class="form-input" id="resume-target-type" placeholder="如：全职、实习"></div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="page-header" style="margin-bottom: 1rem;">
+                    <h2 class="page-title" style="font-size: 1.1rem;">教育背景</h2>
+                    <button class="btn btn-secondary btn-small" onclick="addEducation()">+ 添加</button>
+                </div>
+                <div id="education-list" class="timeline-list"></div>
+            </div>
+
+            <div class="form-section">
+                <div class="page-header" style="margin-bottom: 1rem;">
+                    <h2 class="page-title" style="font-size: 1.1rem;">项目经历</h2>
+                    <button class="btn btn-secondary btn-small" onclick="addProject()">+ 添加</button>
+                </div>
+                <div id="projects-list" class="timeline-list"></div>
+            </div>
+
+            <button class="btn btn-success" onclick="saveResume()">保存更改</button>
+        </div>
+
+        <!-- 简历 PDF -->
+        <div class="panel" id="panel-resume-pdf">
+            <div class="page-header">
+                <h1 class="page-title">简历 PDF</h1>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">当前线上文件</div>
+                <div class="pdf-current" id="pdf-current">
+                    <span class="pdf-current-name" id="pdf-current-name">未配置</span>
+                    <span class="pdf-current-path" id="pdf-current-path"></span>
+                </div>
+                <p style="color: var(--text-tertiary); margin-bottom: 1rem; font-size: 0.85rem;">
+                    这个文件就是首页「下载简历 PDF」按钮指向的内容。没配置时按钮自动隐藏。
+                </p>
+                <div class="pdf-actions">
+                    <input type="file" id="data-pdf-file" accept="application/pdf" style="display: none;" onchange="handleResumePdfUpload(event)">
+                    <button class="btn btn-primary" onclick="document.getElementById('data-pdf-file').click()">⬆ 上传新 PDF 替换</button>
+                    <a class="btn btn-secondary" id="pdf-download" href="#" download>⬇ 下载当前 PDF</a>
+                    <button class="btn btn-danger" id="pdf-clear" onclick="clearResumePdf()">清除</button>
+                </div>
+                <div id="pdf-hint" style="font-size:0.85rem;color:var(--text-tertiary);margin-top:0.75rem;"></div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-section-title">说明</div>
+                <ul class="pdf-notes">
+                    <li>上传后自动保存并立即生效，前台刷新就能下到新版本，不用再点「保存更改」。</li>
+                    <li><strong>上传的同时会读取简历内容</strong>，把联系方式、求职意向、教育背景、在校经历、项目经历、技能说明同步到展示页面。识别不出来的部分保持原样，不会写空。</li>
+                    <li>视频管理不受影响，整个同步流程不会碰视频。</li>
+                    <li>作品卡片按标题匹配，匹配上的只刷新描述和技术标签，图标、截图、外链都保留。</li>
+                    <li>技能只同步说明文字，标签是手工挑的，保持不动。</li>
+                    <li>支持 PDF，单个文件不超过 10MB。每次上传生成新文件名，旧文件留在服务器上不自动删除。</li>
+                    <li>同步前服务器会把上一版内容存到 <code>server/backups/data.json.bak</code>，改坏了能捞回来。</li>
+                </ul>
+            </div>
+        </div>
+    </main>
+
+    <!-- 游戏编辑弹窗 -->
+    <div class="modal-overlay" id="game-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="game-modal-title">添加游戏作品</h2>
+                <button class="modal-close" onclick="closeGameModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="game-id">
+                <div class="form-group"><label class="form-label">作品名称</label><input type="text" class="form-input" id="game-title" placeholder="例如：星际探险家"></div>
+                <div class="form-group"><label class="form-label">图标 Emoji</label><input type="text" class="form-input" id="game-icon" placeholder="例如: 🎮"></div>
+                <div class="form-group full-width"><label class="form-label">封面图片（可添加多张）</label>
+                    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem;">
+                        <input type="file" id="game-image-file" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+                        <button class="btn btn-secondary btn-small" onclick="document.getElementById('game-image-file').click()">+ 添加本地图片</button>
+                        <span style="font-size:0.8rem;color:var(--text-tertiary)">或输入图片URL后点添加</span>
+                        <input type="text" class="form-input" id="game-image-url" placeholder="输入图片链接" style="flex:1;min-width:200px">
+                        <button class="btn btn-primary btn-small" onclick="addImageUrl()">添加</button>
+                    </div>
+                    <div id="game-images-list" class="game-images-list"></div>
+                </div>
+                <div class="form-group full-width"><label class="form-label">游戏简介</label><textarea class="form-textarea" id="game-desc" rows="3" placeholder="详细介绍游戏"></textarea></div>
+                <div class="form-group full-width"><label class="form-label">技术标签（回车添加）</label><div class="tag-input-container" id="game-tech-container"><input type="text" class="tag-input" id="game-tech-input" placeholder="输入标签后按回车"></div></div>
+                <div class="form-group full-width"><label class="form-label">游戏链接（可选）</label><input type="text" class="form-input" id="game-link" placeholder="例如：Steam链接"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeGameModal()">取消</button>
+                <button class="btn btn-success" onclick="saveGame()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- 访问保护 -->
+    <div id="auth-screen" style="position: fixed; inset: 0; background: var(--bg-secondary); z-index: 3000; display: flex; align-items: center; justify-content: center;">
+        <div style="background: var(--bg-card); padding: 3rem; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); text-align: center; max-width: 400px; width: 90%;">
+            <div style="font-size: 3rem; margin-bottom: 1.5rem;">🔐</div>
+            <h2 style="font-family: 'Google Sans', sans-serif; font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary);">内容管理后台</h2>
+            <p style="color: var(--text-tertiary); margin-bottom: 2rem; font-size: 0.9rem;">请输入管理员密码</p>
+            <input type="password" id="auth-password" class="form-input" placeholder="输入密码" style="margin-bottom: 1rem; text-align: center;" onkeydown="if(event.key==='Enter')checkAuth()">
+            <button class="btn btn-primary" style="width: 100%;" onclick="checkAuth()">进入</button>
+            <p id="auth-error" style="color: #ea4335; margin-top: 1rem; font-size: 0.9rem; display: none;">密码错误</p>
+        </div>
+    </div>
+
+    <script src="./assets/admin.js"></script>
+</body>
+</html>

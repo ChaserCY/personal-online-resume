@@ -1,0 +1,551 @@
+# 个人简历 / 作品集网站
+
+一套可以直接部署上线的个人简历站。前台给访客看简历和作品，后台（`/admin.html`）
+在线改内容，改完所有访客立刻能看到。另外还能上传简历 PDF 替换首页的下载文件，
+**并自动把 PDF 里的内容读出来同步到展示页面**。
+
+**没有构建步骤。** `web/` 里就是最终产物，改完刷新浏览器即可，不需要编译、
+打包或安装任何前端依赖。
+
+> 仓库里**不含任何真实个人资料**。`web/data/data.seed.json` 是一份虚构示例
+> （张三 + 假作品 + `example@example.com`），真实内容只存在于服务器上。
+
+---
+
+## 目录
+
+- [它有什么](#它有什么)
+- [架构](#架构)
+- [本地跑起来](#本地跑起来)
+- [部署到服务器](#部署到服务器)
+- [日常使用](#日常使用)
+- [备份与恢复](#备份与恢复)
+- [排查](#排查)
+- [安全须知](#安全须知)
+- [二次开发](#二次开发)
+
+---
+
+## 它有什么
+
+**前台**（`web/index.html`）
+
+- 首屏：头像 emoji、昵称、副标题、下载简历 PDF 按钮
+- 关于我：按「标题：内容」写的段落会渲染成一张张卡片
+- 求职意向：一条横向信息条（期望职位 / 城市 / 薪资 / 性质）
+- 技能：等高卡片网格，每类一张，标签 + 一句话说明
+- 游戏作品：卡片墙，点开是弹窗，支持多张截图和外部链接
+- 视频：B 站链接或 BV 号，点开是内嵌播放器
+- 深色 / 浅色主题切换，跟随系统偏好，选择记在 localStorage
+
+**后台**（`web/admin.html`，需要密码）
+
+| 面板 | 干什么 |
+|---|---|
+| 个人信息 | 昵称、头像、标题、副标题、关于我、技能标签、社交链接 |
+| 视频管理 | 增删 B 站视频 |
+| 游戏作品 | 增删作品，传截图，加技术标签 |
+| 我的简历 | 联系方式、求职意向、教育背景、项目经历 |
+| 简历 PDF | 上传 / 下载 / 清除简历文件，上传后自动同步上面几项内容 |
+
+后台的编辑是 500ms 防抖自动保存的，没有「预览」和「发布」两步。
+
+---
+
+## 架构
+
+### 目录结构
+
+```
+web/                      静态站点，nginx 直接托管这一层
+├── index.html            前台。只有结构和 class，逻辑都在 assets/ 里
+├── admin.html            后台。同样只留结构
+├── assets/
+│   ├── style.css         前台样式
+│   ├── main.js           前台逻辑：读 data.json → 渲染页面
+│   ├── admin.css         后台样式
+│   └── admin.js          后台逻辑：登录、编辑、保存、PDF 上传与同步
+├── data/
+│   ├── data.seed.json    初始内容模板（在 git 里）
+│   └── data.json         线上真实内容（不在 git 里，由后台写入）
+└── uploads/              后台传的图片和简历 PDF（不在 git 里）
+
+server/                   后端：登录校验 + 写 data.json + 收文件 + 解析简历 PDF
+├── index.js              HTTP 接口，约 280 行
+├── resume-parse.js       简历 PDF → 站点内容，约 390 行
+├── package.json          依赖只有 express / dotenv / mupdf
+├── .env                  密钥，不进 git
+└── backups/              每次写 data.json 前的自动备份（不在 git 里）
+
+deploy/
+├── nginx.conf            站点配置
+├── resume-api.service    systemd 单元
+└── deploy.sh             服务器上的一键更新脚本
+```
+
+### 数据流
+
+```
+后台 admin.html
+   │  编辑 → save()（500ms 防抖）
+   ▼
+PUT /api/data  ──Bearer token──▶  server/index.js
+                                     │ 原子写（临时文件 + rename）
+                                     ▼
+                              web/data/data.json
+                                     │ nginx 直接发这个文件
+                                     ▼
+前台 index.html  ──GET ./data/data.json──▶  渲染
+```
+
+**`data.json` 是唯一数据源。** 前台和后台读的是同一个文件，所以你在后台点保存，
+访客刷新就能看到。localStorage 里只留 `portfolio_cache` 作为服务器不可达时的兜底，
+不参与写入。
+
+### 后端接口
+
+一共六个，都在 `server/index.js` 里。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/login` | 密码 | 校验密码，返回签名 token |
+| GET | `/api/session` | token | 检查登录态是否还有效 |
+| GET | `/api/health` | 无 | 返回 `{"ok":true}`，给部署脚本和监控用 |
+| PUT | `/api/data` | token | 原子写 `data.json`，写前备份 |
+| POST | `/api/upload` | token | 收 base64 图片或 PDF，落盘到 `web/uploads/` |
+| POST | `/api/resume/parse` | token | 解析已上传的简历 PDF，返回一份「内容补丁」 |
+
+### 三个关键设计
+
+**1. 为什么没有构建步骤。** 这个站点的页面本来就只有一个 HTML 文件，
+以前却配了一整套 React + Vite + Tailwind 工具链，一行都没被用到，只在部署时
+增加失败面。现在 `web/` 就是产物，`git pull` 完刷新浏览器就是最新版。
+改代码时请保持这个风格：**原生 HTML / CSS / JS**。
+
+**2. 为什么 `data.json` 不进 git。** 它是运行时的内容，不是源码。
+如果跟踪它，服务器上后台一保存，下次 `git pull` 就会冲突。
+所以 `deploy.sh` 敢用 `git reset --hard` —— 后台改的内容和上传的文件
+不归 git 管，不会被抹掉。
+
+**3. 为什么密码校验在服务端。** 后台密码只存在于 `server/.env`，
+登录成功后前端拿到的是一个 HMAC 签名 token（`有效期.签名`），
+服务端无状态校验，重启不掉登录。比较密码用 `timingSafeEqual`，
+连续错 5 次限流 15 分钟。
+
+### 简历 PDF 是怎么变成网页内容的
+
+```
+后台「简历 PDF」上传
+   │  ① POST /api/upload          → 存到 web/uploads/，返回相对路径
+   │  ② PUT  /api/data            → 把路径写进 profile.resumePdf，下载按钮立刻生效
+   ▼
+  ③ POST /api/resume/parse       → resume-parse.js 读 PDF，返回 patch
+   │
+   ▼
+后台 admin.js 的 applyResumePatch(patch)
+   │  只覆盖解析成功的字段，然后 save() → PUT /api/data
+   ▼
+前台刷新可见
+```
+
+解析分四步：读 PDF → 按坐标还原成「视觉顺序的行」→ 按章节标题切段 →
+逐段用正则抽出结构化字段。
+
+**两条铁律**（改 `resume-parse.js` 时别破坏）：
+
+1. **只覆盖解析成功的字段。** 简历排版千变万化，任何一处认不出来都不该把
+   线上已有的内容清空。`parseResume` 返回的 `patch` 里没有的键，调用方就不动它。
+2. **整个同步流程不碰 `videos`。** 视频是独立的一块，和简历无关。
+
+**作品卡片按标题匹配。** 简历里的「星轨回响(联机版)」会匹配到网站上的
+「星轨回响 (多人合作射击)」（`titleKey` 只取括号前的部分），
+匹配上就刷新描述和技术标签，图标、截图、外链保留 —— 那些是网站特有的，简历里没有。
+匹配不上的简历项目只会进 `resume.projects`，不会凭空生成作品卡片。
+
+**技能只同步说明文字**，标签保持手写的那份。
+
+**同步前会自动备份**到 `server/backups/data.json.bak`。
+
+#### 为什么用 MuPDF 而不是 pdf.js
+
+`resume-parse.js` 用 `mupdf`（WASM 版）读 PDF。**别换回 pdf.js。**
+
+有些简历的加粗字体没有可用的 ToUnicode 映射，pdf.js 会把那些字形的数字统统
+解析成 `\u0000`（邮箱变成 `someone@.com`、列表编号整段消失），还会把汉字映射到
+康熙部首区（`面`→`⾯`、`人`→`⼈`）。MuPDF 会回退到字体自带的 cmap，两个问题都没有。
+
+代价是 `mupdf` 这个依赖有 14MB，而且它是 ESM + 顶层 await 的包，
+CommonJS 里只能 `await import('mupdf')`。这个代价是值得的。
+
+---
+
+## 本地跑起来
+
+需要 Node.js >= 18。
+
+```bash
+cd server
+cp .env.example .env          # 打开填一个 ADMIN_PASSWORD
+npm install
+npm start
+```
+
+然后访问 <http://127.0.0.1:3001>，后台在 <http://127.0.0.1:3001>/admin.html。
+
+第一次跑 `web/data/data.json` 还不存在，先复制一份模板：
+
+```bash
+cp web/data/data.seed.json web/data/data.json
+```
+
+> 后端同时托管了 `web/` 静态目录，所以本地不需要装 nginx。
+
+检查前端语法（没有构建步骤，用 node 直接解析一遍就行）：
+
+```bash
+node --check web/assets/main.js && node --check web/assets/admin.js
+```
+
+---
+
+## 部署到服务器
+
+下面按 Ubuntu / Debian 写。**假设你已经有：**
+
+- 一台能 SSH 的云服务器（1 核 1G 就够，这个站几乎不吃资源）
+- 一个**已完成 ICP 备案**、并解析到这台服务器公网 IP 的域名
+
+全程大约 20 分钟。
+
+### 0. 先把代码推到你的仓库
+
+服务器从 git 拉代码，所以本地改动得先推上去：
+
+```bash
+git add -A
+git commit -m "chore: 初始化我的简历站"
+git push origin master
+```
+
+### 1. 放行端口（最容易漏的一步）
+
+去云厂商控制台的**安全组 / 防火墙**里放行 **80** 和 **443** 端口。
+阿里云、腾讯云的实例默认只开 22，不开 80 —— 装好了 nginx 外面也访问不到，
+这是新手最常卡住的地方。系统里的 ufw 也顺手开一下：
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw --force enable
+```
+
+同时确认域名解析已经生效（应该返回你的服务器 IP）：
+
+```bash
+dig +short 你的域名
+```
+
+### 2. 装环境
+
+```bash
+sudo apt update
+sudo apt install -y nginx git nodejs npm
+node -v      # 需要 >= 18
+```
+
+如果 `node -v` 显示低于 18（Ubuntu 22.04 及更早的默认源版本很旧），用 NodeSource 装新版：
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 3. 拉代码
+
+```bash
+sudo mkdir -p /opt/resume
+sudo chown "$USER":"$USER" /opt/resume
+git clone <你的仓库地址> /opt/resume
+cd /opt/resume
+```
+
+> 私有仓库的话，先在服务器上生成 SSH key 加到 GitHub / Gitee，
+> 然后把 clone 地址换成 `git@...`。服务器在国内建议用 Gitee，拉取更快。
+
+### 4. 配置后端密钥
+
+```bash
+cd /opt/resume/server
+cp .env.example .env
+nano .env
+```
+
+至少改这两项：
+
+```ini
+ADMIN_PASSWORD="你的后台密码"
+SESSION_SECRET="一长串随机字符"
+```
+
+生成随机串：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+装依赖：
+
+```bash
+npm install --omit=dev
+```
+
+### 5. 起后端服务
+
+```bash
+sudo cp /opt/resume/deploy/resume-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now resume-api
+systemctl status resume-api        # 应该是 active (running)
+```
+
+先确认它在跑：
+
+```bash
+curl http://127.0.0.1:3001/api/health
+# 期望输出：{"ok":true}
+```
+
+如果报错，`journalctl -u resume-api -n 50 --no-pager` 看日志。
+最常见的两个原因：`.env` 没填 `ADMIN_PASSWORD`，或者 `which node` 不是 `/usr/bin/node`
+（用 nvm 装的就会这样，改一下 service 文件里的 `ExecStart`）。
+
+### 6. 配 nginx
+
+```bash
+sudo cp /opt/resume/deploy/nginx.conf /etc/nginx/sites-available/resume
+sudo nano /etc/nginx/sites-available/resume     # 把 server_name 改成你的域名
+
+sudo ln -sf /etc/nginx/sites-available/resume /etc/nginx/sites-enabled/resume
+sudo rm -f /etc/nginx/sites-enabled/default     # 不删掉的话默认站点会抢 80 端口
+
+sudo nginx -t                                   # 必须先测通再 reload
+sudo systemctl reload nginx
+```
+
+现在用浏览器打开 `http://你的域名/` 应该能看到简历页，`/admin.html` 能登录。
+
+> nginx 只把 `/api/` 转发给 Node，其余全部由它自己发静态文件 ——
+> 所以后端进程绑在 `127.0.0.1`，外网碰不到。
+
+### 7. 初始化内容
+
+服务器上还没有 `data.json`，铺一份模板进去：
+
+```bash
+sudo cp /opt/resume/web/data/data.seed.json /opt/resume/web/data/data.json
+sudo chown www-data:www-data /opt/resume/web/data/data.json
+```
+
+这份模板是虚构示例。登录后台把「个人信息」改成你自己的，
+或者直接上传一份简历 PDF 让内容自动同步过来（见下节）。
+
+### 8. 上 HTTPS
+
+域名已经备案、解析也生效了，配证书就是两条命令：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d 你的域名
+```
+
+certbot 会自动改 nginx 配置并设置好自动续期。验证续期正常：
+
+```bash
+sudo certbot renew --dry-run
+```
+
+> 证书能签下来 ≠ 域名能用。**没备案的域名解析到大陆服务器会被运营商拦截**，
+> 签了证书访客照样打不开。先确认备案通过再做这一步。
+
+---
+
+## 日常使用
+
+### 改内容
+
+直接在网站后台改，点保存即可 —— 改动会写进服务器的 `data.json`，
+所有访客立刻看到。不需要动代码，也不需要重启服务。
+
+### 更新简历 PDF
+
+后台左侧「简历文件 → 简历 PDF」，面板里能看到当前线上的文件、大小，以及
+「⬆ 上传新 PDF 替换 / ⬇ 下载当前 PDF / 清除」。
+
+**上传新简历时，网站内容会跟着一起更新。** 服务器会把你上传的 PDF 读一遍，
+把联系方式、求职意向、教育背景、在校经历、项目经历、技能说明同步到展示页面，
+面板上会列出这次到底同步了哪些东西。上传后不用再点「保存更改」。
+
+几条规矩：
+
+- **识别不出来的部分保持原样**，不会写空值把已有内容清掉。
+- **视频管理不受影响**，同步流程完全不碰视频。
+- **作品卡片按标题匹配**，匹配上的只刷新描述和技术标签，
+  图标、截图、外链都保留 —— 那些是网站特有的，简历里没有。
+- **技能只同步说明文字**，标签保持你手写的那份。
+- 同步前会把上一版内容存到 `server/backups/data.json.bak`。
+
+> **一个取舍**：简历受篇幅限制，写得比网页简略。同步之后，
+> 「关于我」的卡片和作品描述会变成简历原文 —— 更准确，但比手写的短，
+> 标点也会变成半角逗号。想让网页保持更长的文案，就在后台手动改回来，
+> 改完不重新上传 PDF 就不会被覆盖。
+
+**注意 PDF 不进 git**（`.gitignore` 里的 `*.pdf`）。这是故意的 —— 简历源文件是个人资料，
+而且会频繁替换，塞进仓库只会让每次更新都留一份历史副本。
+
+由此带来一个部署上的后果：**新服务器 clone 下来是没有 PDF 的**，
+`data.seed.json` 里 `resumePdf` 是空字符串，所以按钮默认不显示，不会出现点了 404 的情况。
+上传一次之后就有了，文件存在服务器的 `web/uploads/` 下。
+
+每次上传都会生成新文件名，**旧 PDF 不会自动删除**，会一直留在 `web/uploads/` 里。
+换得多了可以自己进去删掉不用的：
+
+```bash
+ssh 你的服务器
+ls -lt /opt/resume/web/uploads/     # 按时间列出来，看看哪些是旧的
+rm /opt/resume/web/uploads/旧的.pdf
+```
+
+备份时记得把 `web/uploads/` 一起打包（见下节），否则换服务器要重新传一遍。
+
+> 也可以不用后台：把 PDF 直接 scp 到服务器的 `web/resume.pdf`，
+> 然后在后台「个人信息」的「文件地址」里填 `./resume.pdf`。
+> 但这样只换了下载文件，不会触发内容同步。
+
+### 改代码
+
+```bash
+# 本地改完推上去
+git push origin master
+
+# 服务器上拉下来并重启
+ssh 你的服务器
+sudo bash /opt/resume/deploy/deploy.sh
+```
+
+`deploy.sh` 会拉代码、装依赖、修权限、重启服务、做健康检查。
+它用的是 `git reset --hard`，但 `web/data/data.json` 和 `web/uploads/` 都在 `.gitignore` 里，
+所以**后台改的内容和上传的图片不会被覆盖**。
+
+---
+
+## 备份与恢复
+
+要备份的就两样东西：
+
+```bash
+# 内容 + 图片 + 简历 PDF，打包下载到本地
+ssh 你的服务器 "sudo tar czf - -C /opt/resume web/data web/uploads" > resume-backup-$(date +%F).tar.gz
+```
+
+恢复就是解回去，然后修一下属主：
+
+```bash
+tar xzf resume-backup-2026-01-01.tar.gz -C /tmp
+sudo cp -r /tmp/web/data /tmp/web/uploads /opt/resume/web/
+sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads
+```
+
+另外后端每次写入前都会把上一版存到 `server/backups/data.json.bak`，
+改坏了可以直接 `cp` 回去：
+
+```bash
+sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
+```
+
+---
+
+## 排查
+
+| 症状 | 多半是 |
+|---|---|
+| 页面样式全丢 / 404 | 路径被写成了绝对路径，检查有没有 `/xxx` 开头的引用 |
+| 后台改了内容，前台没变 | 浏览器缓存了 `data.json`；nginx 里 `location = /data/data.json` 的 `no-cache` 头还在不在 |
+| 后台点保存提示"保存失败" | 后端没起来（`systemctl status resume-api`）或 token 过期（重新登录） |
+| 图片 / PDF 上传失败 | `web/uploads/` 的属主不是 `www-data`，跑一遍 `deploy.sh` 里的 chown |
+| 上传大 PDF 报 413 | 三处上限要对齐：`.env` 的 `MAX_PDF_MB`、`index.js` 的 `express.json` limit、`nginx.conf` 的 `client_max_body_size` |
+| 登录一直失败 | `server/.env` 里的 `ADMIN_PASSWORD`；连续错 5 次会被限流 15 分钟 |
+| PDF 传上去了但内容没同步 | 面板上会写明哪些章节没认出来。解析器只认固定的章节标题，见 `resume-parse.js` 顶部的 `SECTION_HEADINGS` |
+| 改坏了 `data.json` | 上一版在 `server/backups/data.json.bak`，直接 `cp` 回去 |
+| 服务起不来 | `journalctl -u resume-api -n 50 --no-pager`；`ExecStart` 里的 node 路径对不对 |
+
+---
+
+## 安全须知
+
+- **后台密码只存在于 `server/.env`。** 校验在服务端做，前端拿到的只是一个签名 token。
+  永远不要把密码写进 `web/` 里的任何文件。
+- **`.env` 不要提交进 git**（`.gitignore` 已经覆盖），也不要贴给任何人或 AI。
+- 部署完第一件事是把 `ADMIN_PASSWORD` 换掉，别用示例值。
+- 后台页面加了 `X-Robots-Tag: noindex`，不会被搜索引擎收录，但**这不等于访问控制** ——
+  真正的门是登录。
+- 站点没有用户系统，只有你一个管理员。如果你要做多用户，得先加一层用户表，
+  现在的 token 里没有身份概念，任何人拿到密码都是同一个管理员。
+
+---
+
+## 二次开发
+
+想改样式：`web/assets/style.css`（前台）、`admin.css`（后台）。
+主题变量都在文件顶部的 `:root` 和 `[data-theme="dark"]` 里，改那里就行。
+
+想加一个内容板块（比如「博客」）：`data.json` 里加一个数组，
+`index.html` 里加一个 `<section>`，`main.js` 的 `render()` 里加一段渲染，
+后台再加一个面板。`blogs` 这个键已经在数据结构里留好了，但没有界面。
+
+几个坑：
+
+- **`assets/*.js` 必须是经典脚本，不能加 `type="module"`。**
+  两个 HTML 里大量使用内联 `onclick="foo()"`，函数必须留在全局作用域。
+- **所有路径必须是相对的**（`./assets/main.js`、`./data/data.json`、`./api/login`）。
+  站点可能挂在域名根目录，也可能挂在子路径，绝对路径（`/foo`）会直接把页面搞坏。
+- **改 `resume-parse.js` 前先读它的文件头注释**，那里写了为什么用 MuPDF、
+  以及「只覆盖解析成功的字段」这条铁律的来由。
+
+### 已知待办
+
+- 前台在深色模式下会闪一下白屏：主题是在 `main.js` 里应用的，而脚本在 `<body>` 末尾。
+  修法是在 `<head>` 里加一段内联脚本提前设置 `data-theme`。
+- 没有任何自动化测试。站点小，靠人肉点一遍。
+
+---
+
+## 在服务器上继续用 Claude
+
+这个仓库里有一份 `CLAUDE.md`，写清了架构、数据流、约定和排查表。
+在服务器上装好 Claude Code 后，它会自动读这个文件，所以不用你从头解释项目。
+
+```bash
+# 用非 root 用户装（Claude Code 不建议用 root 跑）
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g @anthropic-ai/claude-code
+
+cd /opt/resume
+claude
+```
+
+第一次运行会让你登录 Anthropic 账号（或者设 `ANTHROPIC_API_KEY` 环境变量）。
+之后直接说需求就行，比如：
+
+- 「看 CLAUDE.md，然后把前台的深色模式闪烁修掉」
+- 「deploy.sh 跑完健康检查失败，帮我查日志」
+- 「加一个新的作品板块，数据结构和现有 games 保持一致」
+
+几个建议：
+
+- **在 `/opt/resume` 目录里启动**，这样它能读到 `CLAUDE.md` 和 git 历史。
+- **别把 `.env` 内容贴给它**，也不需要 —— 它知道密码在 `.env` 里，但不需要看见。
+- 让它改完代码后跑 `sudo bash deploy/deploy.sh` 验证，别只看代码不看结果。
+- 服务器上跑 `claude` 需要网络能通 Anthropic API。如果国内服务器连不上，
+  就在本地改完推 git，服务器只负责 `git pull`，这也是更稳的做法。

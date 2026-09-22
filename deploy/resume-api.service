@@ -1,0 +1,32 @@
+# /etc/systemd/system/resume-api.service
+#
+# 装好后：
+#   systemctl daemon-reload
+#   systemctl enable --now resume-api
+#   systemctl status resume-api
+#   journalctl -u resume-api -f        # 实时看日志
+
+[Unit]
+Description=Resume site API (admin login + data.json writes)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+
+WorkingDirectory=/opt/resume/server
+EnvironmentFile=/opt/resume/server/.env
+ExecStart=/usr/bin/node index.js
+
+Restart=on-failure
+RestartSec=3
+
+# 稍微收一下权限：这个进程只需要能写 web/data 和 web/uploads
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+{
+  "name": "resume-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "简历站后端：管理员登录 + data.json 写入 + 图片上传",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "mupdf": "^1.28.1"
+  }
+}

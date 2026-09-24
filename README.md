@@ -225,27 +225,106 @@ node --check web/assets/main.js && node --check web/assets/admin.js
 - 一台能 SSH 的云服务器（1 核 1G 就够，这个站几乎不吃资源）
 - 一个**已完成 ICP 备案**、并解析到这台服务器公网 IP 的域名
 
-### 懒人版：一条命令
+下面按实际操作顺序走一遍，全程大约 10 分钟，其中大半时间在等 `apt` 装包。
+
+### 走一遍：从零到能访问
+
+#### 第 0 步：先在网页控制台做两件事（脚本管不了）
+
+1. **安全组放行 80 和 443** —— 阿里云、腾讯云的实例默认只开 22，
+   不开的话装完 nginx 外面照样访问不到。**这一步最容易漏。**
+2. **确认域名已备案、并解析到这台机器的公网 IP**
 
 ```bash
-ssh 你的服务器
-sudo apt update && sudo apt install -y git
-sudo mkdir -p /opt/resume && sudo chown "$USER":"$USER" /opt/resume
-git clone <你的仓库地址> /opt/resume
+dig +short 你的域名     # 应该返回你的服务器 IP
+```
+
+#### 第 1 步：SSH 进去，把代码拉下来
+
+```bash
+ssh root@你的服务器IP
+```
+
+```bash
+apt update && apt install -y git
+
+mkdir -p /opt/resume
+git clone https://gitee.com/Chance_Li_swpu/personal-online-resume.git /opt/resume
+```
+
+> 上面是 Gitee 的地址，国内服务器拉得快。GitHub 那份是
+> `https://github.com/ChaserCY/personal-online-resume.git`，服务器在国外才用。
+> 私有仓库要先在服务器上配好 SSH key，把地址换成 `git@...`。
+
+#### 第 2 步：跑安装脚本
+
+```bash
 sudo bash /opt/resume/deploy/install.sh
 ```
 
-脚本会问你三件事 —— 域名、后台密码（回车用默认的 `123456`）、邮箱
-（用来签 HTTPS 证书，留空则不配 HTTPS）。
+它会问你三个问题：
 
-**`deploy/install.sh` 干什么**
+| 提示 | 输入什么 |
+|---|---|
+| `域名或公网 IP（nginx 的 server_name）` | 你的域名，比如 `resume.example.com` |
+| `后台登录密码（回车用默认的 123456）` | **建议在这里就填自己的密码**。回车也行，脚本最后会打黄字提醒你改 |
+| `邮箱（申请 Let's Encrypt 证书用，留空则不配 HTTPS）` | 你的邮箱。**留空就只跑 http**，80 端口一样能用 |
+
+然后它自动装完 nginx、Node.js、systemd 服务、站点配置和证书。等它跑完。
+
+成功的话最后会打印：
+
+```
+部署完成
+
+    前台        https://你的域名/
+    后台        https://你的域名/admin.html
+    后台密码    xxxxxx
+```
+
+> 脚本可以重复跑，已经装好的部分会跳过，`data.json` 和 `web/uploads/` 不会被覆盖 ——
+> 中途哪一步错了，修完直接重跑就行。
+
+#### 第 3 步：验证
+
+```bash
+systemctl status resume-api            # 应该是 active (running)
+curl http://127.0.0.1:3001/api/health  # 应该输出 {"ok":true}
+```
+
+浏览器打开 `https://你的域名/`，能看到示例站点（张三 + 4 个虚构作品）就算通了。
+
+#### 第 4 步：登录后台，传你的简历
+
+1. 打开 `https://你的域名/admin.html`，输密码
+2. 左边「**个人信息**」面板顶上有条蓝色提示，说「现在显示的是示例内容」
+3. 点左边「**简历 PDF**」→ 选你的 PDF 上传
+4. 等几秒，面板会列出来这次同步了什么。刷新前台，张三就变成你了，
+   示例作品也换成你的项目了
+5. 视频是独立的，在「**视频管理**」面板手动加，不受简历影响
+
+#### 卡住了看这里
+
+| 现象 | 多半是 |
+|---|---|
+| 浏览器打不开，但服务器上 `curl 127.0.0.1:3001/api/health` 通 | **安全组没放行 80/443**（第 0 步） |
+| IP 能打开，域名打不开 | 域名没解析，或者**没备案被运营商拦了** |
+| 脚本提示「证书没申请成功」 | 域名还没解析好。解析生效后单独重跑：`certbot --nginx -d 你的域名 --redirect` |
+| `systemctl status` 说服务起不来 | `journalctl -u resume-api -n 50 --no-pager` 看日志；多半是读不到 `server/.env` |
+| 页面样式全丢 | 路径被改成了绝对路径，见[排查](#排查) |
+
+---
+
+### 安装脚本到底做了什么
+
+`deploy/install.sh` 是把上面这一串操作打包成的一条命令。它依次做：
 
 | 步骤 | 做的事 |
 |---|---|
 | 1 | 装系统依赖：nginx、Node.js 20（低于 18 就从 NodeSource 装）、openssl；要 HTTPS 才装 certbot |
 | 2 | 用 ufw 放行 22 / 80 / 443（先放 SSH 再 enable，免得把自己关在门外） |
-| 3 | 把代码放到 `/opt/resume`，排除 `.git`、`node_modules`、`.env`、`data.json`、`uploads` |
-| 4 | 生成 `server/.env`：后台密码 + 一个随机的 `SESSION_SECRET`，权限 `600`，属主 root |
+| 3 | 把代码放到 `/opt/resume`，排除 `.git`、`node_modules`、`.env`、`data.json`、`uploads`；顺手把 `/opt/resume` 加进 root 的 `safe.directory` |
+| 4 | 生成 `server/.env`：后台密码 + 一个随机的 `SESSION_SECRET`，权限 `640 root:www-data` |
 | 5 | `npm install --omit=dev` |
 | 6 | 铺一份示例 `data.json`，并把 `web/data`、`web/uploads`、`server/backups` 划给 `www-data` |
 | 7 | 写 systemd 单元（`ExecStart` 里的 node 路径按 `which node` 自动填）并启动，跑一次 `/api/health` |
@@ -261,7 +340,7 @@ sudo bash /opt/resume/deploy/install.sh
 - 证书签失败不算致命（多半是域名还没解析好），脚本会告诉你怎么单独重跑 certbot。
 - 如果服务器上已经有 `server/.env`，脚本不会动它，改密码得自己编辑。
 
-想无人值守就先把答案放进环境变量：
+想无人值守（比如写进自己的开机脚本）就先把答案放进环境变量：
 
 ```bash
 sudo DOMAIN=resume.example.com ADMIN_PASSWORD='你的密码' EMAIL=you@example.com \
@@ -283,6 +362,8 @@ nginx 的 `sites-available` 布局。CentOS / RHEL / AlmaLinux / Arch / macOS
 任何跑得动 Node.js 18+ 的 Linux 都能用。
 
 ### 手动版
+
+不想用脚本、或者系统不是 Debian 系的话，照着这里做。步骤和脚本一一对应。
 
 **0. 先把代码推到你的仓库** —— 服务器从 git 拉代码，本地改动得先推上去：
 
@@ -333,6 +414,10 @@ sudo mkdir -p /opt/resume
 sudo chown "$USER":"$USER" /opt/resume
 git clone <你的仓库地址> /opt/resume
 cd /opt/resume
+
+# deploy.sh 要用 sudo 跑，也就是让 root 去操作一个你 clone 下来的仓库。
+# git 2.35.2 起会因此报 "detected dubious ownership" 拒绝干活，先把它加进白名单。
+sudo git config --global --add safe.directory /opt/resume
 ```
 
 > 私有仓库的话，先在服务器上生成 SSH key 加到 GitHub / Gitee，
@@ -357,6 +442,15 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```ini
 ADMIN_PASSWORD="你的后台密码"
 SESSION_SECRET="上一条命令输出的那串"
+```
+
+改完把权限收紧 —— 服务是以 `www-data` 跑的，systemd 读 `EnvironmentFile` 时
+有的版本按服务用户去读，`600 root:root` 会让它读不到、服务直接起不来，
+所以给组读就够：
+
+```bash
+sudo chown root:www-data /opt/resume/server/.env
+sudo chmod 640 /opt/resume/server/.env
 ```
 
 装依赖：

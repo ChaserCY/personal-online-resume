@@ -548,6 +548,8 @@ sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
 | 图片 / PDF 上传失败 | `web/uploads/` 的属主不是 `www-data`，跑一遍 `deploy.sh` 里的 chown |
 | 上传大 PDF 报 413 | 三处上限要对齐：`.env` 的 `MAX_PDF_MB`、`index.js` 的 `express.json` limit、`nginx.conf` 的 `client_max_body_size` |
 | 登录一直失败 | `server/.env` 里的 `ADMIN_PASSWORD`；连续错 5 次会被限流 15 分钟 |
+| `systemctl status` 说服务起不来 | 多半是读不到 `server/.env`。它得是 `640 root:www-data`（`chown root:www-data` + `chmod 640`），`600 root:root` 会让以 www-data 运行的服务读不到 |
+| `deploy.sh` 报 `detected dubious ownership` | git 以 root 操作别人 clone 的仓库被拒了。跑一次 `sudo git config --global --add safe.directory /opt/resume`（`install.sh` 会自动加） |
 | PDF 传上去了但内容没同步 | 面板上会写明哪些章节没认出来。解析器只认固定的章节标题，见 `resume-parse.js` 顶部的 `SECTION_HEADINGS` |
 | 改坏了 `data.json` | 上一版在 `server/backups/data.json.bak`，直接 `cp` 回去 |
 | 服务起不来 | `journalctl -u resume-api -n 50 --no-pager`；`ExecStart` 里的 node 路径对不对 |

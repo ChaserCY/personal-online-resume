@@ -157,6 +157,11 @@ else
     ok "已复制（.git / node_modules / .env / data.json / uploads 已排除）"
 fi
 
+# deploy.sh 要用 sudo 跑（它得 restart systemd 服务），也就是说 git 会以 root 身份
+# 操作一个别人 clone 下来的仓库。git 2.35.2 起会因此报 "detected dubious ownership"
+# 直接拒绝干活，所以先把 APP_DIR 加进 root 的 safe.directory。
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
 # ---------- 4. 写 .env ----------
 
 log "配置 server/.env"
@@ -175,9 +180,12 @@ HOST=127.0.0.1
 MAX_UPLOAD_MB=5
 MAX_PDF_MB=10
 EOF
-    chmod 600 "$APP_DIR/server/.env"
-    chown root:root "$APP_DIR/server/.env"
-    ok "已生成（权限 600，只有 root 读得到）"
+    # 640 root:www-data —— 服务以 www-data 跑，systemd 读 EnvironmentFile 时
+    # 有的版本是按服务用户去读的，给 600 root:root 会直接起不来。
+    # 组读就够了，不用给 other。
+    chown root:www-data "$APP_DIR/server/.env"
+    chmod 640 "$APP_DIR/server/.env"
+    ok "已生成（权限 640 root:www-data，只有 root 和 www-data 读得到）"
 fi
 
 # ---------- 5. 依赖 + 初始内容 ----------

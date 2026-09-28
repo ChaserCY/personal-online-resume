@@ -398,6 +398,113 @@ nginx 的 `sites-available` 布局。CentOS / RHEL / AlmaLinux / Arch / macOS
 `deploy.sh`（日常更新）和 `web/`、`server/` 本身不依赖发行版，
 任何跑得动 Node.js 18+ 的 Linux 都能用。
 
+### 宝塔面板（或其它可视化面板）服务器
+
+宝塔面板自带一套 nginx（在 `/www/server/nginx`），和 `install.sh` 装的 apt nginx
+**都在抢 80 端口，两套没法共存** —— 不是配置问题，是一个端口不可能同时归两个服务。
+所以装了宝塔的机器，用下面这条路：**让宝塔的 nginx 当唯一管家，把本站点迁进宝塔**，
+以后宝塔里想加多少网站都行，互不冲突。
+
+> 在宝塔机器上**别跑 `install.sh`**（它会再装一套 apt nginx，又打架）。
+> 日常更新照常走 `deploy.sh`（它只更新代码和重启后端，不碰 nginx）。
+
+**0. 先把后端跑起来** —— 这部分只和 Node / systemd 有关，和宝塔完全不冲突，
+照常装就行：
+
+```bash
+# 装 Node >= 18（宝塔软件商店有「Node.js 版本管理器」，装完 node -v 确认一下）
+
+# 代码 + 依赖 + 配置
+sudo mkdir -p /opt/resume
+sudo git clone <你的仓库地址> /opt/resume
+cd /opt/resume/server
+sudo npm install --omit=dev --no-audit --no-fund
+sudo cp .env.example .env
+sudo nano .env            # 改 ADMIN_PASSWORD；SESSION_SECRET 填一长串随机字符
+
+# 用 systemd 跑后端（只碰 resume-api 服务，不碰 nginx）
+sudo cp /opt/resume/deploy/resume-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now resume-api
+curl http://127.0.0.1:3001/api/health    # 期望 {"ok":true}
+
+# 铺初始内容（示例数据，之后后台会覆盖）
+sudo cp /opt/resume/web/data/data.seed.json /opt/resume/web/data/data.json
+sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads /opt/resume/server/backups
+```
+
+**1. 宝塔里添加站点**
+
+面板 → 网站 → 添加站点：
+
+| 项 | 填 |
+|---|---|
+| 域名 | 你的域名 |
+| 根目录 | `/opt/resume/web` |
+| PHP 版本 | 纯静态 |
+| FTP / 数据库 | 不需要，关掉 |
+
+**2. 粘配置**：添加后 → 站点 → 配置文件，在 `server { }` 块里、`location / {` 之前贴上：
+
+```nginx
+    # ===== 简历站专用配置 =====
+
+    charset utf-8;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # 简历数据必须每次拿最新的，否则后台改了访客还是旧内容
+    location = /data/data.json {
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # 上传的图片文件名带随机串，内容不会变，可以放心长缓存
+    location /uploads/ {
+        add_header Cache-Control "public, max-age=2592000";
+    }
+
+    # 只有 API 请求转发给 Node 后端（127.0.0.1:3001，resume-api 服务）
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 20m;   # 上传走 base64 约 1.33 倍，10MB PDF → 约 13MB
+    }
+
+    # 后台是私人页面，别让搜索引擎收录
+    location = /admin.html {
+        add_header X-Robots-Tag "noindex, nofollow";
+    }
+```
+
+**3. 让出 80 端口**：在服务器上停掉 apt 那套 nginx：
+
+```bash
+sudo systemctl stop nginx
+sudo systemctl disable nginx
+```
+
+**4. 宝塔里启动 nginx**（软件商店 → Nginx → 启动），然后到站点里申请 Let's Encrypt 证书
+（宝塔自动续期）。
+
+**5. 验证**：
+
+```bash
+curl -sS -o /dev/null -w "简历站: %{http_code}\n" http://你的域名/
+curl -sS -o /dev/null -w "后端:   %{http_code}\n" http://127.0.0.1:3001/api/health
+```
+
+两个都 `200` 就齐了。之后在宝塔里加任何新网站都不会再和简历站打架。
+
+> 之前踩过的坑，记录在这里供参考：装完发现 `bind() to 0.0.0.0:80 failed (98)`，
+> 十有八九是宝塔（或别的面板）的 nginx 占着 80 —— 不是项目的问题。
+> 用 `sudo ss -tlnp | grep ':80 '` 看是谁占的。
+
 ### 手动版
 
 不想用脚本、或者系统不是 Debian 系的话，照着这里做。步骤和脚本一一对应。

@@ -174,6 +174,7 @@ journalctl -u resume-api -f
 | 简历内容同步错位 | `resume-parse.js` 的章节识别靠标题文字 + 缩进位置。换个模板要调 `SECTION_HEADINGS` |
 | 首页还挂着「张三」「星轨回响」 | seed 的示例内容没被清掉。检查 `data.seed.json` 里 `profile` 和各作品的 `sample: true` 还在不在，以及 `applyResumePatch` 里的删除分支 |
 | 访客下载到的是一串数字文件名 | `main.js` 里给 `#resume-download` 设 `download` 属性的那段；只在同源时生效 |
+| nginx 起不来，日志是 `bind() to 0.0.0.0:80 failed (98)` | 80 被别的进程占了。`sudo ss -tlnp \| grep ':80 '` 看是谁 —— 装了宝塔的话多半是宝塔自带的 nginx（`/www/server/nginx`）。两套 nginx 不能共存，站点要么迁进宝塔（见 README「宝塔面板」一节），要么把宝塔的 nginx 停掉 |
 
 ## 还没做的事
 

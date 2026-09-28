@@ -48,6 +48,21 @@ command -v apt-get >/dev/null 2>&1 || die "这个脚本只支持 Debian/Ubuntu�
 [ -f "$REPO_DIR/server/index.js" ] || die "没找到 server/index.js，请在仓库根目录里跑这个脚本。"
 [ -f "$REPO_DIR/deploy/nginx.conf" ] || die "没找到 deploy/nginx.conf，代码不完整。"
 
+# 宝塔 / 类似面板自带一套 nginx（/www/server/nginx），和本脚本要装的 apt nginx
+# 都在抢 80 端口，两套没法共存（一个端口不可能同时归两个服务）。
+# 检测到就提前说明白，别等装完才发现站点打不开、排查半天。
+if [ -d /www/server/nginx ] || [ -d /www/server/panel ] || command -v bt >/dev/null 2>&1; then
+    warn "检测到宝塔面板（它自带一套 nginx）。"
+    warn "这脚本会再装一套 apt nginx，两套会抢 80 端口互相打架（bind() to 0.0.0.0:80 failed）。"
+    warn "两条路，选一个："
+    warn "  1) 用宝塔托管本站点（推荐，以后宝塔还能加别的网站）"
+    warn "     别跑本脚本了，照 README「宝塔面板」一节做 —— 脚本里另外几步"
+    warn "     （装 node、起 resume-api 服务）可以单独手动做，或先跑本脚本再跳过 nginx。"
+    warn "  2) 坚持用本脚本：先去宝塔里把它的 nginx 停掉并关闭开机自启"
+    warn "     （软件商店 → Nginx → 停止 / 设置），再回来跑。"
+    warn "────────────────────────────────────────────────────"
+fi
+
 # ---------- 1. 问几个问题 ----------
 
 ask() {  # ask <变量名> <提示语> [默认值]

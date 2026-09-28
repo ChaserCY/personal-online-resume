@@ -319,14 +319,22 @@ curl http://127.0.0.1:3001/api/health  # 应该输出 {"ok":true}
 这一步装 nginx + Node.js，是全程最慢的。**另开一个 SSH 窗口**看它到底在干嘛：
 
 ```bash
-ps aux | grep -E "apt|dpkg" | grep -v grep
+# 谁占着 dpkg 锁（最准）
+sudo fuser -v /var/lib/dpkg/lock-frontend
+
+# 有哪些相关进程
+ps aux | grep -iE "apt|dpkg|unattended" | grep -v grep
 ```
+
+> ⚠️ **grep 一定要带 `unattended`。** `unattended-upgrades` 里没有 `apt` 这个连续子串
+> （是 a-**tt**-ended，不是 a-**pt**），只写 `grep -E "apt|dpkg"` 看不见它 ——
+> 结果就是「脚本说在等，你 ps 却什么都看不到」。
 
 | 看到什么 | 说明 | 怎么办 |
 |---|---|---|
-| 有 `apt-get` / `dpkg` 在跑 | 正常下载中。国内机器走默认源可能要 5～10 分钟 | 等 |
-| 有 `unattended-upgrades` | 新机器开机自动更新占着 dpkg 锁，你的 apt 在排队 | 脚本会打印「等它让出锁」并自动等，不用管 |
-| 什么都没有 | 卡在 `curl deb.nodesource.com` 上（国内经常连得上但不动） | 脚本现在有 60 秒超时，超时会自动改用 npmmirror 的官方二进制包 |
+| `apt-get` / `dpkg` 在跑 | 正常下载中。国内机器走默认源可能要 5～10 分钟 | 等 |
+| `unattended-upgrades` | 新机器开机自动更新占着 dpkg 锁，你的 apt 在排队 | 脚本会报出等哪个 PID 并每 30 秒汇报一次。不想等就 `sudo systemctl stop unattended-upgrades`，锁一放脚本自己继续，**不用重跑** |
+| 什么都没有 | 卡在 `curl deb.nodesource.com` 上（国内经常连得上但不动） | 脚本有 60 秒超时，超时会自动改用 npmmirror 的官方二进制包 |
 
 如果两条路都走不通，手动装一个 Node >= 18 再重跑脚本：
 

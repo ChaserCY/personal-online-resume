@@ -113,28 +113,51 @@ export NEEDRESTART_MODE=a
 
 # 新开的云服务器常在跑 unattended-upgrades，它占着 dpkg 锁，
 # 我们的 apt 会在那儿默默排队，看起来跟卡死一样。先说一声再等。
-# （进程名在 /proc 里最多 15 个字符，所以 unattended-upgrades 要写成 unattended-upgr）
+#
+# 进程名在 /proc 里最多 15 个字符，所以 unattended-upgrades 要写成 unattended-upgr。
+# 注意 "unattended-upgrades" 里没有 "apt" 这个连续子串（是 a-t-t 不是 a-p-t），
+# 所以 `ps aux | grep apt` 看不见它 —— 下面提示里给的命令一定要带上 unattended。
+DPKG_LOCK_HINT="ps aux | grep -iE 'apt|dpkg|unattended' | grep -v grep"
+
+# 打印正在占用锁的进程，等的人不用自己去猜是哪个
+dpkg_busy_pids() {
+    pgrep -x apt-get 2>/dev/null
+    pgrep -x apt 2>/dev/null
+    pgrep -x dpkg 2>/dev/null
+    pgrep -x unattended-upgr 2>/dev/null
+}
+
 dpkg_busy() {
-    pgrep -x apt-get >/dev/null 2>&1 ||
-    pgrep -x apt >/dev/null 2>&1 ||
-    pgrep -x dpkg >/dev/null 2>&1 ||
-    pgrep -x unattended-upgr >/dev/null 2>&1
+    [ -n "$(dpkg_busy_pids)" ]
 }
 
 wait_for_dpkg() {
     if ! dpkg_busy; then
         return 0
     fi
-    warn "有别的 apt/dpkg 在跑（多半是新机器的自动更新占着锁），等它跑完……"
+    # 先把「在等谁」亮出来，省得人在那儿干瞪眼
+    local pids
+    pids="$(dpkg_busy_pids | tr '\n' ' ')"
+    warn "锁被占着，在等这些进程跑完："
+    for p in $pids; do
+        warn "    PID $p  $(ps -p "$p" -o comm=,etime= 2>/dev/null || echo '(读不到)')"
+    done
+    warn "（多半是云服务器开机的自动更新 unattended-upgrades，慢的能跑十几分钟）"
+    warn "不想等就另开一个窗口停掉它：sudo systemctl stop unattended-upgrades"
+    warn "停了之后这里会自动继续，不用重跑脚本。"
+
     local i=0
     while dpkg_busy; do
         sleep 3
         i=$((i + 1))
         if [ $((i % 10)) -eq 0 ]; then
-            warn "还在等（已 $((i * 3)) 秒）—— 另开一个窗口看：ps aux | grep -E 'apt|dpkg'"
+            warn "还在等（已 $((i * 3)) 秒）—— 另开一个窗口：$DPKG_LOCK_HINT"
         fi
         if [ "$i" -gt 200 ]; then
-            die "等了 10 分钟还没让出锁。手动看看：ps aux | grep -E 'apt|dpkg'"
+            die "等了 10 分钟还没等到。手动看看谁占着： $DPKG_LOCK_HINT
+      也可以直接看锁本身： sudo fuser -v /var/lib/dpkg/lock-frontend
+      实在不想等： sudo systemctl stop unattended-upgrades
+      然后重跑这个脚本。"
         fi
     done
     ok "锁拿到了，继续"

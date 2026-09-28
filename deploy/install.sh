@@ -384,7 +384,13 @@ if ! nginx -t >/dev/null 2>&1; then
     sed -i '/listen \[::\]:80;/d' "/etc/nginx/sites-available/$SITE_NAME"
 fi
 nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx 配置有问题，见上。"; }
-systemctl reload nginx
+
+# 有的人 apt 装 nginx 时没自动启动它（装到一半被打断就会这样），
+# reload 一个没在跑的服务会直接报错。所以先 ensure 起来 + 开机自启，
+# 然后 reload-or-restart：在跑就热加载，没跑就启动。
+systemctl enable nginx >/dev/null 2>&1 || true
+systemctl reload-or-restart nginx
+systemctl is-active --quiet nginx || die "nginx 起不来，journalctl -u nginx -n 30 看看。"
 ok "nginx 已加载 $SITE_NAME"
 
 # ---------- 8. HTTPS ----------

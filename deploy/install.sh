@@ -106,6 +106,10 @@ fi
 
 log "安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
+# Ubuntu 22.04 起自带 needrestart。apt 装完包它会弹一个全屏的
+# 「Which services should be restarted?」，那个界面不吃 DEBIAN_FRONTEND，
+# 会把无人值守的 apt 卡在那儿等人按键。设成 a 让它自己决定。
+export NEEDRESTART_MODE=a
 
 # 新开的云服务器常在跑 unattended-upgrades，它占着 dpkg 锁，
 # 我们的 apt 会在那儿默默排队，看起来跟卡死一样。先说一声再等。
@@ -137,6 +141,17 @@ wait_for_dpkg() {
 }
 
 wait_for_dpkg
+# 上一次跑被打断（SSH 掉线、Ctrl+C）会留下 pending trigger，
+# 或者更糟：包装了一半。这两条都是幂等的，没事就跑一下。
+if ! dpkg --audit 2>/dev/null | grep -q .; then
+    : # dpkg 库是干净的，什么都不用做
+else
+    warn "dpkg 里还有没做完的事（多半是上次被打断留下的），先收拾干净"
+    dpkg --configure --pending
+    dpkg --audit 2>/dev/null | grep -q . && die "dpkg 还是没收拾干净，先把上面那段输出发给懂的人看看"
+    ok "收拾干净了"
+fi
+
 echo "    apt-get update（国内机器走默认源可能要几分钟，会刷很多行，别急着 Ctrl+C）"
 apt-get update -q
 

@@ -307,11 +307,40 @@ curl http://127.0.0.1:3001/api/health  # 应该输出 {"ok":true}
 
 | 现象 | 多半是 |
 |---|---|
+| **卡在「安装系统依赖」不动** | 这一段本来就最慢。看下面[单独说](#卡在安装系统依赖) |
 | 浏览器打不开，但服务器上 `curl 127.0.0.1:3001/api/health` 通 | **安全组没放行 80/443**（第 0 步） |
 | IP 能打开，域名打不开 | 域名没解析，或者**没备案被运营商拦了** |
 | 脚本提示「证书没申请成功」 | 域名还没解析好。解析生效后单独重跑：`certbot --nginx -d 你的域名 --redirect` |
 | `systemctl status` 说服务起不来 | `journalctl -u resume-api -n 50 --no-pager` 看日志；多半是读不到 `server/.env` |
 | 页面样式全丢 | 路径被改成了绝对路径，见[排查](#排查) |
+
+##### 卡在「安装系统依赖」
+
+这一步装 nginx + Node.js，是全程最慢的。**另开一个 SSH 窗口**看它到底在干嘛：
+
+```bash
+ps aux | grep -E "apt|dpkg" | grep -v grep
+```
+
+| 看到什么 | 说明 | 怎么办 |
+|---|---|---|
+| 有 `apt-get` / `dpkg` 在跑 | 正常下载中。国内机器走默认源可能要 5～10 分钟 | 等 |
+| 有 `unattended-upgrades` | 新机器开机自动更新占着 dpkg 锁，你的 apt 在排队 | 脚本会打印「等它让出锁」并自动等，不用管 |
+| 什么都没有 | 卡在 `curl deb.nodesource.com` 上（国内经常连得上但不动） | 脚本现在有 60 秒超时，超时会自动改用 npmmirror 的官方二进制包 |
+
+如果两条路都走不通，手动装一个 Node >= 18 再重跑脚本：
+
+```bash
+# 从 npmmirror 拿官方二进制包，解到 /usr/local
+arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=x64; [ "$arch" = "aarch64" ] && arch=arm64
+url=$(curl -fsSL https://registry.npmmirror.com/-/binary/node/latest-v20.x/ \
+      | grep -o "https://[^\"]*linux-${arch}\.tar\.xz" | sort -V | tail -1)
+curl -fL -o /tmp/node.tar.xz "$url"
+sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+node -v      # 应该 >= 20
+```
+
+装完 `sudo bash /opt/resume/deploy/install.sh` 重跑就行，脚本可以重复跑。
 
 ---
 
@@ -400,12 +429,28 @@ sudo apt install -y nginx git nodejs npm
 node -v      # 需要 >= 18
 ```
 
-如果 `node -v` 显示低于 18（Ubuntu 22.04 及更早的默认源版本很旧），用 NodeSource 装新版：
+**如果 `node -v` 低于 18**（Ubuntu 22.04 及更早的默认源只有 v12），装个新版。
+先试官方的 NodeSource：
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
+
+> **国内服务器这条命令经常卡住** —— 连得上但下不动，而且不报错。
+> 等 60 秒还没动静就 `Ctrl+C`，改用 npmmirror 上的官方二进制包：
+>
+> ```bash
+> arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=x64; [ "$arch" = "aarch64" ] && arch=arm64
+> url=$(curl -fsSL https://registry.npmmirror.com/-/binary/node/latest-v20.x/ \
+>       | grep -o "https://[^\"]*linux-${arch}\.tar\.xz" | sort -V | tail -1)
+> curl -fL -o /tmp/node.tar.xz "$url"
+> sudo apt install -y xz-utils
+> sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+> node -v      # 应该 >= 20
+> ```
+>
+> 解到 `/usr/local` 下就是 `bin/node`、`bin/npm`、`lib/node_modules`，直接在 PATH 里。
 
 #### 3. 拉代码
 

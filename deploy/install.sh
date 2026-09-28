@@ -99,11 +99,49 @@ else
 fi
 
 # ---------- 2. 系统依赖 ----------
+#
+# 这一段是全程最慢的（国内机器 apt 走默认源可能要 5～10 分钟），所以刻意
+# 不用 -qq 把 apt 的输出吞掉：卡住的时候至少能看出是卡在哪一行。
+# 下面这些 apt 调用也别改成 >/dev/null，那会让人以为脚本死了。
 
 log "安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg openssl nginx >/dev/null
+
+# 新开的云服务器常在跑 unattended-upgrades，它占着 dpkg 锁，
+# 我们的 apt 会在那儿默默排队，看起来跟卡死一样。先说一声再等。
+# （进程名在 /proc 里最多 15 个字符，所以 unattended-upgrades 要写成 unattended-upgr）
+dpkg_busy() {
+    pgrep -x apt-get >/dev/null 2>&1 ||
+    pgrep -x apt >/dev/null 2>&1 ||
+    pgrep -x dpkg >/dev/null 2>&1 ||
+    pgrep -x unattended-upgr >/dev/null 2>&1
+}
+
+wait_for_dpkg() {
+    if ! dpkg_busy; then
+        return 0
+    fi
+    warn "有别的 apt/dpkg 在跑（多半是新机器的自动更新占着锁），等它跑完……"
+    local i=0
+    while dpkg_busy; do
+        sleep 3
+        i=$((i + 1))
+        if [ $((i % 10)) -eq 0 ]; then
+            warn "还在等（已 $((i * 3)) 秒）—— 另开一个窗口看：ps aux | grep -E 'apt|dpkg'"
+        fi
+        if [ "$i" -gt 200 ]; then
+            die "等了 10 分钟还没让出锁。手动看看：ps aux | grep -E 'apt|dpkg'"
+        fi
+    done
+    ok "锁拿到了，继续"
+}
+
+wait_for_dpkg
+echo "    apt-get update（国内机器走默认源可能要几分钟，会刷很多行，别急着 Ctrl+C）"
+apt-get update -q
+
+wait_for_dpkg
+apt-get install -y -q ca-certificates curl gnupg openssl xz-utils nginx
 
 # 系统防火墙。放行 SSH 再 enable，顺序反了会把自己关在门外。
 # 注意：这只管机器里的 ufw，云厂商控制台的**安全组**得你自己去开 80/443，
@@ -116,23 +154,86 @@ if command -v ufw >/dev/null 2>&1; then
     ok "ufw 已放行 22 / 80 / 443"
 fi
 
-# node 18 起步：mupdf 和 express 都要它
+# node 18 起步：mupdf 和 express 都要它。
+# 三级降级：已有的 → NodeSource 的 deb 源 → 官方二进制包（走国内镜像）。
+# 之所以要第三级：deb.nodesource.com 在国内经常连得上但龟速，或者干脆连不上，
+# 而 apt 装的 nodejs 在 Ubuntu 22.04 上只有 v12，不够用。
+install_node_tarball() {
+    local arch url tmp
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64 | amd64) arch=x64 ;;
+        aarch64 | arm64) arch=arm64 ;;
+        *)
+            warn "不认识的架构 $arch，没法自动下 Node"
+            return 1
+            ;;
+    esac
+    echo "    从 npmmirror 找 Node 20 的 linux-$arch 包……"
+    url="$(curl -fsSL --max-time 30 'https://registry.npmmirror.com/-/binary/node/latest-v20.x/' |
+        grep -o "https://[^\"]*linux-${arch}\.tar\.xz" | sort -V | tail -1)"
+    if [ -z "$url" ]; then
+        warn "镜像里没找到合适的包"
+        return 1
+    fi
+    echo "    $url"
+    tmp="$(mktemp -d)"
+    if ! curl -fL --max-time 900 --progress-bar -o "$tmp/node.tar.xz" "$url"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    # 解到 /usr/local 下就是 bin/node、bin/npm、lib/node_modules，在 PATH 里
+    tar -xJf "$tmp/node.tar.xz" -C /usr/local --strip-components=1 \
+        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md
+    rm -rf "$tmp"
+    hash -r 2>/dev/null || true
+    return 0
+}
+
 NODE_MAJOR=0
 if command -v node >/dev/null 2>&1; then
     NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 fi
-if [ "$NODE_MAJOR" -lt 18 ]; then
-    ok "安装 Node.js 20（当前版本 $NODE_MAJOR）"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null
-    apt-get install -y -qq nodejs >/dev/null
-else
+
+if [ "$NODE_MAJOR" -ge 18 ]; then
     ok "Node.js $(node -v) 已满足要求"
+else
+    echo "    当前 Node.js 是 v$NODE_MAJOR，需要装 20。依次试这两条路："
+    echo "      1) deb.nodesource.com（限时 60 秒，国内经常慢或连不上）"
+    echo "      2) npmmirror 上的官方二进制包（国内快）"
+
+    node_ok=0
+    if curl -fsSL --max-time 60 https://deb.nodesource.com/setup_20.x -o /tmp/nodesource_setup.sh; then
+        if bash /tmp/nodesource_setup.sh; then
+            wait_for_dpkg
+            if apt-get install -y -q nodejs; then
+                node_ok=1
+            fi
+        fi
+        rm -f /tmp/nodesource_setup.sh
+    else
+        warn "连不上 deb.nodesource.com（国内常见），直接走镜像"
+    fi
+
+    if [ "$node_ok" != "1" ]; then
+        if install_node_tarball; then
+            node_ok=1
+        else
+            die "两条路都没装成。手动装一个 Node >= 18（见 README 的「排查」）再重跑这个脚本。"
+        fi
+    fi
+    NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+    if [ "$NODE_MAJOR" -lt 18 ]; then
+        die "装完还是 v$NODE_MAJOR，不对。检查一下 which -a node。"
+    fi
+    ok "Node.js $(node -v) 装好了"
 fi
 NODE_BIN="$(command -v node)"
 [ -n "$NODE_BIN" ] || die "node 装完还是找不到，检查 PATH。"
 
 if [ "$WANT_HTTPS" = "1" ]; then
-    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+    wait_for_dpkg
+    apt-get install -y -q certbot python3-certbot-nginx
     ok "certbot 已装"
 fi
 

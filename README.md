@@ -764,26 +764,6 @@ sudo bash /opt/resume/deploy/deploy.sh
 它用的是 `git reset --hard`，但 `web/data/data.json` 和 `web/uploads/` 都在 `.gitignore` 里，
 所以**后台改的内容和上传的图片不会被覆盖**。
 
-> **`nginx.conf` 不归 `deploy.sh` 管。** 里面的 `server_name` / `root` 是按每台机器
-> 改过的，自动覆盖会把域名冲掉，certbot 塞进去的 443 那段也会一起没。
-> 所以仓库里改了安全头、缓存策略这类东西，`deploy.sh` 只会在最后**提醒你一句**
-> （它拿 `install.sh` 装配置时记下的模板指纹比对），同步要手动做：
->
-> **别直接 `cp` 覆盖。** 已装的那份不只是 `server_name` 被改过，certbot 还往里
-> 塞了 `listen 443 ssl` 那一整段，覆盖下去 HTTPS 就没了。把新增的几行抄过去：
->
-> ```bash
-> # 先看改了什么
-> sudo diff -u /etc/nginx/sites-available/resume /opt/resume/deploy/nginx.conf
-> # 把新加的那几行抄进已装的那份，server_name 保持不动
-> sudo nano /etc/nginx/sites-available/resume
-> sudo nginx -t && sudo systemctl reload nginx
->
-> # 同步完更新指纹，以后就不再提醒了
-> sudo sh -c "sha256sum /opt/resume/deploy/nginx.conf | cut -d' ' -f1 \
->     > /etc/nginx/sites-available/resume.template-sha"
-> ```
-
 ---
 
 ## 备份与恢复

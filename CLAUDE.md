@@ -166,7 +166,6 @@ journalctl -u resume-api -f
 |---|---|
 | 页面样式全丢 / 404 | 路径被写成了绝对路径，检查有没有 `/xxx` 开头的引用 |
 | 后台改了内容，前台没变 | 浏览器缓存了 data.json；nginx 里 `location = /data/data.json` 的 `no-cache` 头还在不在 |
-| 改了 `deploy/nginx.conf`，跑完 `deploy.sh` 却没生效 | 正常 —— `deploy.sh` 不碰 nginx（`server_name` 每台机器都不一样）。它会拿模板指纹比一下，变了就打印手动同步的命令 |
 | 调大 `MAX_PDF_MB` 之后传 PDF 还是失败 | nginx 的 `client_max_body_size` 还停在 20m。后端启动时会打 `[warn]` 告诉你该改成多少（express 那边的上限是自动跟的，不用管） |
 | 后台点保存提示"保存失败" | 后端没起来（`systemctl status resume-api`）或 token 过期（重新登录） |
 | 图片上传失败 | `web/uploads/` 的属主不是 `www-data`，跑一遍 `deploy.sh` 里的 chown |

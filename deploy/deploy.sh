@@ -66,9 +66,10 @@ elif [ "$(sha256sum "$APP_DIR/deploy/nginx.conf" | cut -d' ' -f1)" = "$(cat "$SH
     echo "    仓库里的 deploy/nginx.conf 没变"
 else
     echo "    仓库里的 deploy/nginx.conf 改过了，服务器上装的还是老那份。"
-    echo "    想同步的话手动来（下面第一条命令先看清楚改了什么）："
-    echo "        diff -u $NGINX_SITE $APP_DIR/deploy/nginx.conf"
-    echo "        cp $APP_DIR/deploy/nginx.conf $NGINX_SITE   # 完了把 server_name 改回你的域名"
+    echo "    别直接 cp 覆盖 —— 那份配置不只是 server_name 被改过，certbot 还往里"
+    echo "    塞了 443 那一整段，覆盖下去 HTTPS 就没了。照下面来："
+    echo "        diff -u $NGINX_SITE $APP_DIR/deploy/nginx.conf   # 先看改了什么"
+    echo "        nano $NGINX_SITE                                # 把新加的几行抄过去"
     echo "        nginx -t && systemctl reload nginx"
     echo "    同步完更新指纹，这条提示就不再出现："
     echo "        sha256sum $APP_DIR/deploy/nginx.conf | cut -d' ' -f1 > $SHA_FILE"

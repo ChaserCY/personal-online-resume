@@ -782,6 +782,38 @@ sudo bash /opt/resume/deploy/deploy.sh
 它用的是 `git reset --hard`，但 `web/data/data.json` 和 `web/uploads/` 都在 `.gitignore` 里，
 所以**后台改的内容和上传的图片不会被覆盖**。
 
+> **改过 `deploy/nginx.conf` 的话，`deploy.sh` 不会把它同步上去** —— 它只动代码和
+> 后端进程，从来不碰 nginx（nginx 配置里可能有 certbot 加的 443 段和你的域名，
+> 直接覆盖会把 HTTPS 弄坏）。见下面「nginx 配置的改动」。
+
+#### nginx 配置的改动
+
+`deploy/nginx.conf` 是**模板**，不是服务器上正在跑的那份。仓库里改了它，服务器上
+不会自动生效，得手动把改动的几行抄过去：
+
+```bash
+# 1. 先看仓库里这份和服务器上那份差在哪
+sudo diff /opt/resume/deploy/nginx.conf /etc/nginx/sites-available/resume
+
+# 2. 把新增的那几行抄进已装的那份（别整个 cp 覆盖）
+sudo nano /etc/nginx/sites-available/resume
+
+# 3. 测通再 reload
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**别用 `cp` 覆盖。** 装了 HTTPS 的机器上，certbot 早就往同一个文件里塞了
+`listen 443 ssl` / `ssl_certificate` / 80 跳转那一整段，覆盖下去 HTTPS 直接失效，
+而且要等 reload 完才会发现。`server_name` 同理，服务器上那份是你的域名，
+仓库里是 `resume.example.com`。
+
+改完在浏览器里验证一下（`curl -I` 也行）：
+
+```bash
+curl -sI https://你的域名/assets/main.js | grep -i cache-control
+# 应该看到：cache-control: no-cache
+```
+
 ---
 
 ## 备份与恢复
@@ -823,6 +855,7 @@ sudo cp /opt/resume/server/backups/data-20260101-093000.json /opt/resume/web/dat
 | 症状 | 多半是 |
 |---|---|
 | 页面样式全丢 / 404 | 路径被写成了绝对路径，检查有没有 `/xxx` 开头的引用 |
+| **部署完访客还是旧样式 / 旧 JS**，页面错位或整片空白 | 浏览器缓存。nginx 里 `location /` 的 `Cache-Control: no-cache` 还在不在（见「nginx 配置的改动」）。先让访客硬刷新：F12 开着的时候按住刷新按钮选「清空缓存并硬性重新加载」 |
 | 后台改了内容，前台没变 | 浏览器缓存了 `data.json`；nginx 里 `location = /data/data.json` 的 `no-cache` 头还在不在 |
 | 后台点保存提示"保存失败" | 后端没起来（`systemctl status resume-api`）或 token 过期（重新登录） |
 | 图片 / PDF 上传失败 | `web/uploads/` 的属主不是 `www-data`，跑一遍 `deploy.sh` 里的 chown |

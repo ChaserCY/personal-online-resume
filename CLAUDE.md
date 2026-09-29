@@ -53,6 +53,12 @@ deploy/
 是另写一份，不是往这个脚本里加分支。`ADMIN_PASSWORD` 默认 `123456`，
 是故意的（本地和演示省事），脚本最后会提醒用户改。
 
+**`deploy/nginx.conf` 是模板，不是服务器上正在跑的那份，`deploy.sh` 从来不动它。**
+它只拉代码 + 重启后端；nginx 那份里可能有 certbot 塞进去的 443 段和用户的域名，
+自动覆盖会把 HTTPS 弄坏。所以改了 `nginx.conf` 得在服务器上手动同步那几行
+（`diff` 出来照着抄，别 `cp`），README 的「nginx 配置的改动」一节有步骤。
+改之前想清楚：这是整个仓库里**唯一不会跟着 `deploy.sh` 生效**的东西。
+
 ## 数据流（改动前务必先理解这个）
 
 ```
@@ -180,6 +186,7 @@ journalctl -u resume-api -f
 | 症状 | 多半是 |
 |---|---|
 | 页面样式全丢 / 404 | 路径被写成了绝对路径，检查有没有 `/xxx` 开头的引用 |
+| 部署完访客还是旧样式 / 旧 JS，页面错位或整片空白 | 浏览器缓存。先硬刷新（F12 开着时按住刷新按钮选「清空缓存并硬性重新加载」）确认；根治靠 nginx 里 `location /` 的 `Cache-Control: no-cache`（见「nginx 配置的改动」）。注意 `location = /admin.html` 得单独再写一遍，`add_header` 不继承 |
 | 后台改了内容，前台没变 | 浏览器缓存了 data.json；nginx 里 `location = /data/data.json` 的 `no-cache` 头还在不在 |
 | 调大 `MAX_PDF_MB` 之后传 PDF 还是失败 | nginx 的 `client_max_body_size` 还停在 20m。后端启动时会打 `[warn]` 告诉你该改成多少（express 那边的上限是自动跟的，不用管） |
 | 后台点保存提示"保存失败" | 后端没起来（`systemctl status resume-api`）或 token 过期（重新登录） |

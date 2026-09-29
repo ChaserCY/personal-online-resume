@@ -1,0 +1,54 @@
+# 在仓库根目录一条命令起来：
+#
+#   ADMIN_PASSWORD='你的后台密码' docker compose up -d --build
+#
+# 更新代码之后也要带 --build，否则跑的还是旧镜像：
+#
+#   git pull && docker compose up -d --build
+#
+# 数据落在仓库自己的目录里（web/data、web/uploads、server/backups），
+# 和不用 Docker 的部署完全一样，备份 / 迁移照 README 那节做就行。
+
+services:
+  resume:
+    build: .
+    image: resume-site:local
+    container_name: resume-site
+    restart: unless-stopped
+    init: true
+
+    # 默认只绑 127.0.0.1 —— 前面应该有一层反代（宝塔 / nginx / Caddy）负责 HTTPS，
+    # 它转发到 http://127.0.0.1:3001 就行，README 里那些现成配置一字不用改。
+    #
+    # 想直接 http://服务器IP:3001 打开：BIND_ADDR=0.0.0.0。但那是明文 HTTP，
+    # 后台密码会裸奔在网络上，只在完全可信的内网这么干。
+    # 想换宿主机端口：PORT=3005（容器里始终是 3001，不用管）。
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-3001}:3001"
+
+    environment:
+      # 没设置就直接报错退出，报的是下面这句话，不会起一个登不进去的站点
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?请先设置后台密码，例如：ADMIN_PASSWORD=xxx docker compose up -d}"
+      # 可选。不填的话后端会从 ADMIN_PASSWORD 派生，代价是改密码会踢掉所有登录态。
+      # 生成一个：openssl rand -hex 32
+      SESSION_SECRET: "${SESSION_SECRET:-}"
+      TOKEN_TTL_HOURS: "${TOKEN_TTL_HOURS:-168}"
+      # 容器里必须绑 0.0.0.0，否则端口映射进不来。Dockerfile 里也写了，这里再写一遍
+      # 是因为 environment 的优先级高于镜像的 ENV —— 万一有人改了镜像，这里兜底。
+      HOST: 0.0.0.0
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-5}"
+      MAX_PDF_MB: "${MAX_PDF_MB:-10}"
+      BACKUP_INTERVAL_MINUTES: "${BACKUP_INTERVAL_MINUTES:-10}"
+      BACKUP_KEEP: "${BACKUP_KEEP:-20}"
+
+    # 千万别加 env_file: ./server/.env。那份里 HOST=127.0.0.1，而 compose 的
+    # env_file 优先级比镜像 ENV 高，会把上面的 0.0.0.0 顶掉 ——
+    # 症状是「容器起来了，外面死活连不上」，而且怎么看配置都「没问题」。
+    #
+    # 用 bind mount 而不是命名卷：内容直接落在仓库目录里，看得见、好备份、
+    # docker compose down 也删不掉。代价是文件属主是 root（容器默认身份），
+    # 要手动改 data.json 得 sudo。
+    volumes:
+      - ./web/data:/app/web/data
+      - ./web/uploads:/app/web/uploads
+      - ./server/backups:/app/server/backups

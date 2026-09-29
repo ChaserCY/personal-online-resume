@@ -1,0 +1,9 @@
+# 换行符统一成 LF。
+#
+# 不写这个的话，Windows 上 clone（Git for Windows 默认 core.autocrlf=true）
+# 会把 docker-entrypoint.sh 签出成 CRLF，容器里 sh 读到每行末尾的 \r 直接报错，
+# 报的还是「not found」这种指不到任何地方的信息。Dockerfile 里的 chmod +x 救不了。
+#
+# 仓库里的 .sh 都是 Linux 上跑的，Windows 上不需要 CRLF 版本。
+* text=auto eol=lf
+*.sh text eol=lf

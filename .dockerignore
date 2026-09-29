@@ -1,0 +1,36 @@
+# 构建上下文是「工作区」，不是 git —— 这里漏一条，真实资料就被烤进镜像层了。
+# .dockerignore 是安全控制，不是体积优化。
+#
+# 和 .gitignore 有个区别要记住：这里的 * 不跨目录，
+# 所以 `*.pdf` 只匹配根目录的 PDF，web/uploads/ 里那些得写 `**/*.pdf`。
+
+# 和镜像无关的东西
+.git
+.gitignore
+.gitattributes
+.claude
+README.md
+CLAUDE.md
+deploy/
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 真实内容：后台写的数据、上传的图片和简历 PDF。
+# data.seed.json 故意不在这里 —— 镜像要用它当初始内容模板。
+web/data/data.json
+web/uploads/
+**/*.pdf
+
+# 密钥
+server/.env
+server/.env.*
+
+# 运行时备份和日志
+server/backups/
+*.log
+
+# 依赖：镜像里用 npm ci 重装。别把宿主机那份拷进去 ——
+# 在 Windows / macOS 上装出来的 node_modules 换到 linux 容器里不一定能用。
+node_modules/
+**/node_modules/

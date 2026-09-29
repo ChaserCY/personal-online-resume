@@ -66,6 +66,11 @@
 ### 目录结构
 
 ```
+Dockerfile                容器镜像：只跑 Node，静态文件和 /api/ 都归它
+docker-compose.yml        docker compose up -d --build 一条命令起来
+docker-entrypoint.sh      容器启动前的准备（补一份 data.seed.json）
+.dockerignore             挡住真实数据 —— 这是安全控制，不是体积优化
+
 web/                      静态站点，nginx 直接托管这一层
 ├── index.html            前台。只有结构和 class，逻辑都在 assets/ 里
 ├── admin.html            后台。同样只留结构
@@ -239,10 +244,34 @@ node --check web/assets/main.js && node --check web/assets/admin.js
 
 - 一台能 SSH 的云服务器（1 核 1G 就够，这个站几乎不吃资源）
 - 一个**已完成 ICP 备案**、并解析到这台服务器公网 IP 的域名
+  （只用 IP 访问也行，只是没有 HTTPS）
 
-下面按实际操作顺序走一遍，全程大约 10 分钟，其中大半时间在等 `apt` 装包。
+### 选一条路
 
-### 走一遍：从零到能访问
+| 你的情况 | 走哪条 |
+|---|---|
+| Ubuntu / Debian，想要 nginx + HTTPS，一条命令装完 | [脚本安装](#脚本安装推荐) ← 推荐 |
+| 服务器上有宝塔面板 | [宝塔面板](#宝塔面板) |
+| 不想在宿主机装 Node，或者喜欢容器 | [Docker](#docker) |
+| CentOS / RHEL / Arch / macOS，或者想自己控制每一步 | [手动版](#手动版) |
+| 80 端口已经被别的反代占了，只想跑后端 | [脚本安装](#脚本安装推荐) 加 `SKIP_NGINX=1` |
+| 只是想先在自己电脑上看看效果 | [本地跑起来](#本地跑起来) |
+
+四条路装出来是同一个东西：**`web/` 里的静态文件 + 一个 Node 后端（只处理 `/api/`）**。
+区别只在于谁来托管静态文件、谁来管 HTTPS：
+
+```
+                    静态文件            后端            HTTPS
+脚本安装        nginx（apt 装的）     systemd 服务      certbot
+宝塔面板        面板自带的 nginx      systemd 服务      面板申请
+Docker          容器里的 Express      同一个容器        自己的反代
+手动版          你装的那个 nginx      systemd 服务      你自己
+```
+
+内容永远落在 `web/data/data.json` 和 `web/uploads/` 这两个地方，
+所以**换路不影响已有内容**，随时可以从一条换到另一条。
+
+### 脚本安装（推荐）
 
 #### 第 0 步：先在网页控制台做两件事（脚本管不了）
 
@@ -270,6 +299,12 @@ git clone https://gitee.com/Chance_Li_swpu/personal-online-resume.git /opt/resum
 > 上面是 Gitee 的地址，国内服务器拉得快。GitHub 那份是
 > `https://github.com/ChaserCY/personal-online-resume.git`，服务器在国外才用。
 > 私有仓库要先在服务器上配好 SSH key，把地址换成 `git@...`。
+
+**第 1、2 步可以合成一条**（`install.sh` 会自己在 `/opt/resume` 里找代码）：
+
+```bash
+git clone <你的仓库地址> /opt/resume && sudo bash /opt/resume/deploy/install.sh
+```
 
 #### 第 2 步：跑安装脚本
 
@@ -373,7 +408,7 @@ node -v      # 应该 >= 20
 
 | 步骤 | 做的事 |
 |---|---|
-| 1 | 装系统依赖：nginx、Node.js 20（低于 18 就从 NodeSource 装）、openssl；要 HTTPS 才装 certbot |
+| 1 | 装系统依赖：Node.js 20（低于 18 就从 NodeSource 装）、openssl、nginx；要 HTTPS 才装 certbot |
 | 2 | 用 ufw 放行 22 / 80 / 443（先放 SSH 再 enable，免得把自己关在门外） |
 | 3 | 把代码放到 `/opt/resume`，排除 `.git`、`node_modules`、`.env`、`data.json`、`uploads`；顺手把 `/opt/resume` 加进 root 的 `safe.directory` |
 | 4 | 生成 `server/.env`：后台密码 + 一个随机的 `SESSION_SECRET`，权限 `640 root:www-data` |
@@ -384,6 +419,26 @@ node -v      # 应该 >= 20
 | 9 | 签 Let's Encrypt 证书并开启 80 → 443 跳转 |
 | 10 | 打印前台 / 后台地址和后台密码 |
 
+**开关**（都走环境变量，默认值和没有开关时完全一样）：
+
+| 开关 | 作用 |
+|---|---|
+| `SKIP_NGINX=1` | 完全不碰 nginx：不装 nginx 包、不写站点配置、不申请证书。后端照装，静态文件交给你的反代 / 面板。见[宝塔面板](#宝塔面板) |
+| `SKIP_UFW=1` | 完全不碰 ufw（云厂商的安全组本来就管不了，面板自己管防火墙时也用得上） |
+| `PORT=3005` | 后端监听端口（默认 3001）。**已装过的机器上以 `server/.env` 为准**，不会被这个开关改掉 |
+| `HOST=0.0.0.0` | 后端直接对外（默认 `127.0.0.1`，只给本机反代用）。没有反代才需要，而且是明文 HTTP，脚本会打黄字提醒 |
+
+```bash
+# 宝塔机器：只装后端
+sudo SKIP_NGINX=1 bash /opt/resume/deploy/install.sh
+
+# 已经有反代占着 80，顺便换个后端端口
+sudo SKIP_NGINX=1 PORT=3005 bash /opt/resume/deploy/install.sh
+```
+
+> ⚠️ 开关要写在 `sudo` **后面**。`export SKIP_NGINX=1` 再 `sudo` 是不行的 ——
+> sudo 默认会把继承来的环境变量清掉，开关被静默丢弃，nginx 照样装上。
+
 几个细节：
 
 - **可以重复跑**：已经装好的部分会跳过，`data.json` 和 `web/uploads/` 不会被覆盖。
@@ -391,6 +446,9 @@ node -v      # 应该 >= 20
 - 有些小厂的机器没开 IPv6，`listen [::]:80` 会让 `nginx -t` 失败，脚本会自动去掉那行重试。
 - 证书签失败不算致命（多半是域名还没解析好），脚本会告诉你怎么单独重跑 certbot。
 - 如果服务器上已经有 `server/.env`，脚本不会动它，改密码得自己编辑。
+- 如果站点配置里已经有 HTTPS（certbot 写进去的 `listen 443`），脚本也不会覆盖它 ——
+  直接覆盖会把证书配置弄没，而 `nginx -t` 照样通过，症状是「更新完突然只剩 http」。
+  只是想改端口的话，脚本会把该敲的那条 `sed` 打出来。
 
 想无人值守（比如写进自己的开机脚本）就先把答案放进环境变量：
 
@@ -413,39 +471,40 @@ nginx 的 `sites-available` 布局。CentOS / RHEL / AlmaLinux / Arch / macOS
 `deploy.sh`（日常更新）和 `web/`、`server/` 本身不依赖发行版，
 任何跑得动 Node.js 18+ 的 Linux 都能用。
 
-### 宝塔面板（或其它可视化面板）服务器
+### 宝塔面板
 
-宝塔面板自带一套 nginx（在 `/www/server/nginx`），和 `install.sh` 装的 apt nginx
-**都在抢 80 端口，两套没法共存** —— 不是配置问题，是一个端口不可能同时归两个服务。
-所以装了宝塔的机器，用下面这条路：**让宝塔的 nginx 当唯一管家，把本站点迁进宝塔**，
-以后宝塔里想加多少网站都行，互不冲突。
+（其它可视化面板 —— 1Panel、aaPanel、小皮 —— 思路一样：面板的 nginx 当唯一管家，
+本站点只贡献后端。下面以宝塔为例。）
 
-> 在宝塔机器上**别跑 `install.sh`**（它会再装一套 apt nginx，又打架）。
+宝塔面板自带一套 nginx（在 `/www/server/nginx`），和 `install.sh` 默认会装的 apt nginx
+**都在抢 80 端口，两套没法共存** —— 不是配置问题，一个端口不可能同时归两个服务。
+所以装了宝塔的机器走这条路：**让宝塔的 nginx 当唯一管家，本站点只贡献后端**。
+
+好在 `install.sh` 有个 `SKIP_NGINX=1` 开关：装 Node、装 systemd 服务、铺数据文件照做，
+只是不碰 nginx、不碰 80/443、不申请证书。
+
+> 在宝塔机器上**一定要带 `SKIP_NGINX=1`**，裸跑 `install.sh` 会再装一套 apt nginx 打架。
 > 日常更新照常走 `deploy.sh`（它只更新代码和重启后端，不碰 nginx）。
 
-**0. 先把后端跑起来** —— 这部分只和 Node / systemd 有关，和宝塔完全不冲突，
-照常装就行：
+**0. 装后端** —— 这部分只和 Node / systemd 有关，和宝塔完全不冲突：
 
 ```bash
-# 装 Node >= 18（宝塔软件商店有「Node.js 版本管理器」，装完 node -v 确认一下）
+apt update && apt install -y git
+git clone <你的仓库地址> /opt/resume
+sudo SKIP_NGINX=1 bash /opt/resume/deploy/install.sh
+```
 
-# 代码 + 依赖 + 配置
-sudo mkdir -p /opt/resume
-sudo git clone <你的仓库地址> /opt/resume
-cd /opt/resume/server
-sudo npm install --omit=dev --no-audit --no-fund
-sudo cp .env.example .env
-sudo nano .env            # 改 ADMIN_PASSWORD；SESSION_SECRET 填一长串随机字符
+> ⚠️ 开关要写在 `sudo` **后面**。`export SKIP_NGINX=1` 再 `sudo` 是不行的 ——
+> sudo 默认会把继承来的环境变量清掉，开关被静默丢弃，nginx 照样装上。
+>
+> 不想用脚本的话，[手动版](#手动版)的第 1～5 步加第 7 步就是它做的事，
+> 跳过第 6 步（配 nginx）和第 8 步（上 HTTPS）即可。
 
-# 用 systemd 跑后端（只碰 resume-api 服务，不碰 nginx）
-sudo cp /opt/resume/deploy/resume-api.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now resume-api
+跑完最后会打印「部署完成（SKIP_NGINX=1：没装 nginx、没申请证书）」，
+并告诉你站点根目录和反代目标。确认后端活着：
+
+```bash
 curl http://127.0.0.1:3001/api/health    # 期望 {"ok":true}
-
-# 铺初始内容（示例数据，之后后台会覆盖）
-sudo cp /opt/resume/web/data/data.seed.json /opt/resume/web/data/data.json
-sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads /opt/resume/server/backups
 ```
 
 **1. 宝塔里添加站点**
@@ -459,7 +518,10 @@ sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads /op
 | PHP 版本 | 纯静态 |
 | FTP / 数据库 | 不需要，关掉 |
 
-**2. 粘配置**：添加后 → 站点 → 配置文件，在 `server { }` 块里、`location / {` 之前贴上：
+**2. 改配置**：站点 → 配置文件，改三处。**三处都要做**，少一处就会出现
+「部署完了访客还是看到旧页面」。
+
+**2a. 贴上简历站自己的配置**（放在 `server { }` 块里，位置随意，nginx 不看顺序）：
 
 ```nginx
     # ===== 简历站专用配置 =====
@@ -473,11 +535,13 @@ sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads /op
     # 简历数据必须每次拿最新的，否则后台改了访客还是旧内容
     location = /data/data.json {
         add_header Cache-Control "no-cache, must-revalidate";
+        try_files $uri =404;
     }
 
     # 上传的图片文件名带随机串，内容不会变，可以放心长缓存
     location /uploads/ {
         add_header Cache-Control "public, max-age=2592000";
+        try_files $uri =404;
     }
 
     # 只有 API 请求转发给 Node 后端（127.0.0.1:3001，resume-api 服务）
@@ -491,21 +555,79 @@ sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads /op
         client_max_body_size 20m;   # 上传走 base64 约 1.33 倍，10MB PDF → 约 13MB
     }
 
-    # 后台是私人页面，别让搜索引擎收录
+    # 静态文件每次回源校验。
+    #
+    # 不给这个头的话浏览器按启发式规则自己估缓存期 —— 大致是「距文件上次修改时间的
+    # 10%」。一个几个月没动过的 main.js，估出来就是好几天的缓存，部署完访客直接拿
+    # 缓存里的旧文件、根本不回源。而这个站点的 HTML 和 JS 是一起改的（改版时类名
+    # 会大换），新 HTML 配旧 JS 就是整页白屏 —— 渲染函数在旧元素上抛错，下面全空。
+    #
+    # 宝塔的 HTML 项目模板里通常**没有** location /，直接贴上去就行；
+    # 要是你的模板里已经有了，把这两行加进那一个里面，别再开一个新的。
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ =404;
+    }
+
+    # 后台是私人页面，别让搜索引擎收录。
+    # 这里必须把 Cache-Control 再写一遍：nginx 的 add_header 不继承 ——
+    # 本层只要有一条自己的 add_header，上一层的就全丢了。
     location = /admin.html {
         add_header X-Robots-Tag "noindex, nofollow";
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
     }
 ```
 
-**3. 让出 80 端口**：在服务器上停掉 apt 那套 nginx：
+**2b. 删掉模板里那条 `expires` 正则规则** —— 这一步最容易漏，漏了 2a 就白做：
+
+宝塔的模板里有这么一段：
+
+```nginx
+    location ~ .*\.(js|css)?$
+    {
+        expires      12h;
+        error_log /dev/null;
+        access_log /dev/null;
+    }
+```
+
+⚠️ **正则 location（`~`）的优先级高于前缀 location（`/`）**，所以上面 2a 里加的
+`no-cache` 对 JS / CSS **完全无效** —— 它们会走这条，被套上 12 小时缓存。
+（那条正则里的 `(js|css)?` 是可选的，实际上任何带 `.` 的路径都归它管，
+`/index.html`、`/admin.html` 也算。）
+
+**整段删掉**就行，JS / CSS / HTML 会自然落到 2a 的 `location /` 上：
+
+```nginx
+    # 删掉整段 location ~ .*\.(js|css)?$ { ... }
+```
+
+> 不想删的话，也可以只把那行 `expires 12h;` 换成 `add_header Cache-Control "no-cache";`。
+> **别两个都留** —— 会同时吐出两个 `Cache-Control` 头，浏览器取哪个不保证。
+
+图片那条 `location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$ { expires 30d; }` **留着别动**：
+上传的图片文件名里带随机串，内容永远不变，长缓存正合适。
+
+**2c. 保存并重载**：宝塔里改完配置文件会自动 reload。然后**在浏览器里验一下**：
+
+```bash
+# 应该看到 cache-control: no-cache。看到 max-age=43200（12h）就是 2b 没做。
+curl -sI http://你的域名/assets/main.js | grep -i cache-control
+curl -sI http://你的域名/ | grep -i cache-control
+```
+
+**3. 让出 80 端口**（**只有以前裸跑过 `install.sh` 的机器才需要**）：
+那种情况机器上有一套 apt nginx 和宝塔的抢 80，停掉它：
 
 ```bash
 sudo systemctl stop nginx
 sudo systemctl disable nginx
 ```
 
-**4. 宝塔里启动 nginx**（软件商店 → Nginx → 启动），然后到站点里申请 Let's Encrypt 证书
-（宝塔自动续期）。
+用 `SKIP_NGINX=1` 装的就没有这一步 —— 它根本没装 apt nginx。
+
+**4. 申请证书**：站点 → SSL → Let's Encrypt，宝塔会自动续期。
 
 **5. 验证**：
 
@@ -516,9 +638,111 @@ curl -sS -o /dev/null -w "后端:   %{http_code}\n" http://127.0.0.1:3001/api/he
 
 两个都 `200` 就齐了。之后在宝塔里加任何新网站都不会再和简历站打架。
 
+> ⚠️ **宝塔会重新生成这个配置文件。** 在面板里切 SSL、加域名、改伪静态、
+> 换运行目录这些操作，都可能按模板把配置重写一遍，手改的内容会被冲掉 ——
+> 症状是「过一阵子又开始拿到旧 JS」。动过面板设置之后，回来跑一遍 2c 那两条 curl 复查。
+
 > 之前踩过的坑，记录在这里供参考：装完发现 `bind() to 0.0.0.0:80 failed (98)`，
 > 十有八九是宝塔（或别的面板）的 nginx 占着 80 —— 不是项目的问题。
 > 用 `sudo ss -tlnp | grep ':80 '` 看是谁占的。
+
+### Docker
+
+不想在宿主机上装 Node，或者习惯用容器管服务，走这条。**容器里只有一个 Node 进程**
+（Express 同时托管 `web/` 静态文件和 `/api/`），没有 nginx，HTTPS 交给前面那层反代。
+
+**一条命令**（在仓库根目录）：
+
+```bash
+ADMIN_PASSWORD='你的后台密码' docker compose up -d --build
+```
+
+跑完在服务器上 `curl -sI http://127.0.0.1:3001/` 应该通。默认只绑 `127.0.0.1`，
+所以外面还打不开 —— 前面要有一层反代（[宝塔](#宝塔面板) / nginx / Caddy）。
+
+**反代怎么配**：和[脚本安装](#脚本安装推荐)那条路不一样，这里**静态文件也由容器发**，
+所以反代不用管 `root`，把**所有**请求都转给容器就行：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 20m;   # 传简历 PDF 用，和 MAX_PDF_MB 对齐
+}
+```
+
+不用像[宝塔](#宝塔面板)那节那样给 `/data/data.json`、`/assets/*.js` 单独加 `no-cache`：
+Express 发静态文件时带的是 `Cache-Control: public, max-age=0`（允许缓存，但每次都得
+回源校验），效果和 `no-cache` 一样。**所以 Docker 这条路天生没有「部署完访客还是旧
+JS」「后台改了内容前台不变」那个问题**，也就不用去动那些头。
+
+> 宝塔用户注意：模板里那几条 `location ~ ...` 正则规则**照样得删**，而且比 2b 说的
+> 删得更多。正则 location 的优先级高于 `location /`，它们会绕开反代、自己去站点
+> 根目录找文件（走 Docker 时那儿什么都没有），结果是 404：
+> - `location ~ .*\.(js|css)?$` —— [2b](#宝塔面板) 那条，删。
+> - `location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$` —— 非 Docker 部署要留着（图片在
+>   磁盘上，长缓存正合适），**走 Docker 时也得删**，`/uploads/` 里的图在容器里。
+>
+> 站点配置里只留上面那一个 `location /`（[2a](#宝塔面板) 里只有 `charset` 和
+> `gzip` 两段还用得上，`root` / `try_files` / `/api/` 反代都不用了）。
+
+> 想直接 `http://服务器IP:3001` 打开：加 `BIND_ADDR=0.0.0.0`。
+> 但那是**明文 HTTP，后台密码会裸奔在网络上**，只在完全可信的内网这么干。
+
+**内容落在哪儿**：和不用 Docker 的部署**完全一样**，就在仓库目录里 ——
+
+| 宿主机 | 容器里 | 装什么 |
+|---|---|---|
+| `web/data/` | `/app/web/data` | `data.json`（后台写的内容） |
+| `web/uploads/` | `/app/web/uploads` | 上传的图片和简历 PDF |
+| `server/backups/` | `/app/server/backups` | 自动备份快照 |
+
+用的是 bind mount 不是 Docker 卷，所以 [备份与恢复](#备份与恢复)那节的命令一字不用改，
+`docker compose down`（哪怕加 `-v`）也删不掉你的内容。
+
+**日常操作**：
+
+```bash
+# 更新代码（--build 不能省，不加的话跑的还是旧镜像）
+git pull && docker compose up -d --build
+
+# 看日志
+docker compose logs -f
+
+# 停 / 起 / 重启
+docker compose down
+docker compose up -d
+docker compose restart
+```
+
+**几个要知道的**：
+
+- **没有 HTTPS。** 容器里不带证书，前面挂反代（宝塔 / Caddy / 宿主机的 nginx）
+  申请证书就行。**别把 3001 端口直接开到公网还不加 TLS** —— 后台密码是明文传的。
+- **文件属主是 root。** 容器默认以 root 跑，`web/data/`、`web/uploads/` 里新建的
+  文件在宿主机上也是 root 的。要手动改 `data.json` 得 `sudo`。
+  （反过来，如果强行让容器以普通用户跑，在 root 克隆下来的目录里会 `EACCES`，
+  症状是后台「保存失败」—— 比 root 属主麻烦得多，所以默认就用 root。）
+- **端口被占**：宿主机上已经有 3001 在跑（比如以前原生装过）就会起不来。
+  换一个：`PORT=3005 ADMIN_PASSWORD='xxx' docker compose up -d`。
+- **容器里是 UTC 时间**，备份快照的文件名按 UTC 写。想要本地时间就加 `TZ=Asia/Shanghai`。
+
+**想省掉每次敲密码**：compose 会自动读仓库根目录的 `.env`（`.gitignore` 里已经忽略了），
+写一次就行：
+
+```bash
+printf 'ADMIN_PASSWORD=%s\nSESSION_SECRET=%s\n' '你的密码' "$(openssl rand -hex 32)" > .env
+docker compose up -d --build
+```
+
+> 容器里的 `HOST` 被固定成 `0.0.0.0`（容器里绑 `127.0.0.1` 的话端口映射进不来）。
+> 别在 `docker-compose.yml` 里加 `env_file: ./server/.env` —— 那份里是
+> `HOST=127.0.0.1`，优先级比镜像的环境变量高，会把 `0.0.0.0` 顶掉，
+> 症状是「容器明明在跑，外面就是连不上」。
 
 ### 手动版
 
@@ -782,9 +1006,19 @@ sudo bash /opt/resume/deploy/deploy.sh
 它用的是 `git reset --hard`，但 `web/data/data.json` 和 `web/uploads/` 都在 `.gitignore` 里，
 所以**后台改的内容和上传的图片不会被覆盖**。
 
+> **Docker 部署**换成这两条（`--build` 不能省，不加的话跑的还是旧镜像）：
+>
+> ```bash
+> cd 你的仓库目录 && git pull && docker compose up -d --build
+> ```
+
 > **改过 `deploy/nginx.conf` 的话，`deploy.sh` 不会把它同步上去** —— 它只动代码和
 > 后端进程，从来不碰 nginx（nginx 配置里可能有 certbot 加的 443 段和你的域名，
 > 直接覆盖会把 HTTPS 弄坏）。见下面「nginx 配置的改动」。
+>
+> 宝塔那边同理：**面板会按模板重新生成配置文件**，手改的内容过一阵可能被冲掉。
+> 动过面板设置（切 SSL、加域名、改伪静态）之后回来复查一次
+> `curl -sI http://你的域名/assets/main.js | grep -i cache-control`。
 
 #### nginx 配置的改动
 
@@ -833,6 +1067,10 @@ sudo cp -r /tmp/web/data /tmp/web/uploads /opt/resume/web/
 sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads
 ```
 
+> **用 Docker 部署的话这两条一字不用改** —— 内容就在仓库目录里同样两个位置，
+> 把 `/opt/resume` 换成你的仓库路径就行（Docker 那边文件属主是 root，
+> `chown` 那步可以省掉，但留着也无害）。
+
 另外后端每次写入前都会备份，改坏了可以直接 `cp` 回去。`server/backups/` 里有两样：
 
 - `data.json.bak` —— 永远是**上一版**；
@@ -866,6 +1104,11 @@ sudo cp /opt/resume/server/backups/data-20260101-093000.json /opt/resume/web/dat
 | PDF 传上去了但内容没同步 | 面板上会写明哪些章节没认出来。解析器只认固定的章节标题，见 `resume-parse.js` 顶部的 `SECTION_HEADINGS` |
 | 改坏了 `data.json` | 上一版在 `server/backups/data.json.bak`；改了一轮才发现的话，挑一份更早的 `data-*.json` 快照 |
 | 服务起不来 | `journalctl -u resume-api -n 50 --no-pager`；`ExecStart` 里的 node 路径对不对 |
+| **Docker：容器在跑，外面连不上** | `HOST` 不是 `0.0.0.0`。检查 `docker compose config` 里 `HOST` 那行，以及有没有人往 compose 里加了 `env_file: ./server/.env`（那份里是 `127.0.0.1`，优先级更高） |
+| Docker：改了代码没生效 | `docker compose up -d` 少写了 `--build`，跑的还是旧镜像 |
+| Docker：首次启动前台一片空白 | 挂载的 `web/data/` 里没有 `data.seed.json`。容器启动时 `docker-entrypoint.sh` 会补一份；看看 `docker compose logs` 里有没有相关报错 |
+| Docker：`up` 报端口被占 | 宿主机 3001 上已经有东西在跑（比如以前原生装过）。换一个：`PORT=3005 docker compose up -d` |
+| Docker：后台保存失败 | 挂载目录的属主不对。容器以 root 跑，`web/data`、`web/uploads` 应该是 root 可写；用 `docker compose logs` 看具体报错 |
 
 ---
 

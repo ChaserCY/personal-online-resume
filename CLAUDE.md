@@ -20,6 +20,12 @@
 ## 目录结构
 
 ```
+Dockerfile                容器镜像：只跑 Node，静态文件和 /api/ 都归它
+docker-compose.yml        docker compose up -d --build 一条命令起来
+docker-entrypoint.sh      容器启动前的准备（补一份 data.seed.json）
+.dockerignore             挡住真实数据，见下
+.gitattributes            强制 LF，否则 Windows clone 出来的 .sh 带 \r 容器起不来
+
 web/                      静态站点，nginx 直接托管
 ├── index.html            前台。只有结构和 class，逻辑都在 assets/ 里
 ├── admin.html            后台。同样只留结构
@@ -52,6 +58,20 @@ deploy/
 之类的额外工具 —— 用 `apt-get` / `tar` / `sed` 这些一定有的。要支持别的系统
 是另写一份，不是往这个脚本里加分支。`ADMIN_PASSWORD` 默认 `123456`，
 是故意的（本地和演示省事），脚本最后会提醒用户改。
+
+**`install.sh` 有四个开关**（`SKIP_NGINX` / `SKIP_UFW` / `PORT` / `HOST`），
+都在文件开头的「0. 开关」那段里解析和校验。加新开关时守住两条：
+
+- **不加开关时必须和以前一模一样。** 每个开关都有默认值，且默认值走的就是老路径。
+- **开关要写在 `sudo` 后面**（`sudo SKIP_NGINX=1 bash ...`）。`export` 再 `sudo`
+  会被 sudo 清掉，脚本内部看不出来，只能写在文件头注释里提醒。
+
+`PORT` 和 `HOST` 比看上去难缠：脚本里有**五处**引用它们（`.env`、ufw、健康检查、
+nginx 模板的 `proxy_pass`、收尾打印），漏一处就是静默故障。而且 `.env` 已存在时
+脚本不重写它，所以开头有一段「以 `server/.env` 里的值为准」的解析 ——
+没有那段的话，拿 `PORT=4000` 重跑会得到「systemd 还在 3001、nginx 改到 4000、
+健康检查打 4000 失败」这种最难查的组合。`deploy.sh` 也读 `.env` 拿端口，
+理由一样。
 
 **`deploy/nginx.conf` 是模板，不是服务器上正在跑的那份，`deploy.sh` 从来不动它。**
 它只拉代码 + 重启后端；nginx 那份里可能有 certbot 塞进去的 443 段和用户的域名，
@@ -160,6 +180,18 @@ pdf.js 会把数字全解析成 `\u0000`（邮箱变成 `someone@.com`、列表�
   放到 `<body>` 末尾的脚本里就晚了，深色用户每次刷新会闪一下白屏。
   顺带：属性必须总是有值（哪怕跟随系统），`toggleTheme()` 读的是它，
   为空时第一次点「切换」会算出和当前一样的主题，看着像按钮坏了。
+- **Docker 那条路不能引入构建步骤。** `Dockerfile` 只做三件事：`npm ci`、
+  拷 `web/` 和 `server/`、跑 `node index.js`。别在里面加前端打包、
+  别改 `web/` 里文件的内容 —— 容器里跑的就是仓库里那份静态文件。
+- **`.dockerignore` 是安全控制，不是体积优化。** 构建上下文是**工作区**不是 git，
+  漏一条就会把真实资料烤进镜像层：`web/data/data.json`（真名、联系方式）、
+  `web/uploads/`（照片、简历 PDF）、`server/.env`（后台密码）。
+  另外注意 `.dockerignore` 的 `*` **不跨目录** —— `*.pdf` 只挡根目录，
+  `web/uploads/` 里的 PDF 得靠 `**/*.pdf`。
+- **Docker 里的 `HOST` 必须是 `0.0.0.0`。** 容器里绑 `127.0.0.1` 等于只能自己访问自己，
+  端口映射进不来，症状是「容器 running，外面连不上」。`Dockerfile` 的 `ENV` 和
+  `docker-compose.yml` 的 `environment` 各写了一遍 —— 别删，也别加
+  `env_file: ./server/.env`（那份是 `127.0.0.1`，优先级比镜像 ENV 高）。
 
 ## 常用命令
 
@@ -174,11 +206,18 @@ node --check web/assets/main.js && node --check web/assets/admin.js
 # 服务器上首次部署
 sudo bash /opt/resume/deploy/install.sh
 
+# 只装后端、不碰 nginx（宝塔机器 / 已经有反代占着 80）
+sudo SKIP_NGINX=1 bash /opt/resume/deploy/install.sh
+
 # 服务器上日常更新
 sudo bash /opt/resume/deploy/deploy.sh
 
 # 看后端日志
 journalctl -u resume-api -f
+
+# Docker：起 / 更新 / 日志（--build 不能省，不加就是跑旧镜像）
+ADMIN_PASSWORD='xxx' docker compose up -d --build
+docker compose logs -f
 ```
 
 ## 排查
@@ -198,6 +237,11 @@ journalctl -u resume-api -f
 | 首页还挂着「张三」「星轨回响」 | seed 的示例内容没被清掉。检查 `data.seed.json` 里 `profile` 和各作品的 `sample: true` 还在不在，以及 `applyResumePatch` 里的删除分支 |
 | 访客下载到的是一串数字文件名 | `main.js` 里给 `#resume-download` 设 `download` 属性的那段；只在同源时生效 |
 | nginx 起不来，日志是 `bind() to 0.0.0.0:80 failed (98)` | 80 被别的进程占了。`sudo ss -tlnp \| grep ':80 '` 看是谁 —— 装了宝塔的话多半是宝塔自带的 nginx（`/www/server/nginx`）。两套 nginx 不能共存，站点要么迁进宝塔（见 README「宝塔面板」一节），要么把宝塔的 nginx 停掉 |
+| 宝塔机器上「部署完访客还是旧 JS」 | 宝塔模板里的 `location ~ .*\.(js\|css)?$ { expires 12h; }` 是**正则** location，优先级高于 `location /`，会把手改的 `no-cache` 完全盖掉。整段删掉，见 README「宝塔面板」2b |
+| 裸跑过 `install.sh` 又想改用宝塔 | 机器上多了一套 apt nginx 在抢 80。`systemctl stop nginx && systemctl disable nginx`，以后用 `SKIP_NGINX=1` 重跑 |
+| 换过 `PORT` 之后 `deploy.sh` 报健康检查失败 | 它从 `server/.env` 读端口；`.env` 里还是旧的，或者 nginx 的 `proxy_pass` 没跟着改。脚本会把「nginx 指向 X、.env 里是 Y」直接打出来 |
+| Docker 里容器 running 但外面连不上 | `HOST` 没设成 `0.0.0.0`。别往 compose 里加 `env_file: ./server/.env`（那份是 `127.0.0.1`，优先级比镜像 ENV 高） |
+| Docker 首次启动前台一片空白 | bind mount 盖住了镜像里的 `web/data/`，而宿主机那份没有 `data.seed.json`。`docker-entrypoint.sh` 会补，看 `docker compose logs` 确认它跑了 |
 
 ## 还没做的事
 

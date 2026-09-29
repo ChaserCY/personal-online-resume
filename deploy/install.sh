@@ -10,14 +10,24 @@
 #   sudo DOMAIN=resume.example.com ADMIN_PASSWORD='你的密码' EMAIL=you@example.com \
 #        bash deploy/install.sh
 #
+# 不想要 nginx、不想动防火墙、或者要换端口，用下面这几个开关（默认值和以前一样）：
+#
+#   sudo SKIP_NGINX=1 bash deploy/install.sh            # 不装 nginx、不申请证书
+#   sudo SKIP_NGINX=1 PORT=3005 bash deploy/install.sh  # 顺带换后端端口
+#   sudo SKIP_UFW=1 bash deploy/install.sh              # 不碰 ufw
+#   sudo HOST=0.0.0.0 bash deploy/install.sh            # 后端直接对外（没有反代时才用）
+#
+# 开关必须写在 sudo 后面。`export SKIP_NGINX=1` 再 sudo 是不行的 ——
+# sudo 默认会把继承来的环境变量清掉，开关会被静默丢弃，nginx 照样装上。
+#
 # 它会做完这些事：
-#   1. 装系统依赖：nginx、Node.js 20、certbot（要 HTTPS 才装）
+#   1. 装系统依赖：Node.js 20、nginx、certbot（要 HTTPS 才装后两个）
 #   2. 把代码放到 /opt/resume（已经在那儿就跳过）
 #   3. 生成 server/.env，写上后台密码和一个随机的 SESSION_SECRET，权限 600
 #   4. npm install --omit=dev
 #   5. 铺一份示例 data.json（已经有了就不动）
 #   6. 装 systemd 服务 resume-api 并启动，跑一次 /api/health
-#   7. 写 nginx 站点配置、去掉默认站点、reload
+#   7. 写 nginx 站点配置、去掉默认站点、reload（SKIP_NGINX=1 时第 7、8 步整段跳过）
 #   8. 域名解析好的话签一张 Let's Encrypt 证书并开启 80 → 443 跳转
 #   9. 打印前台 / 后台地址和后台密码
 #
@@ -48,19 +58,88 @@ command -v apt-get >/dev/null 2>&1 || die "这个脚本只支持 Debian/Ubuntu�
 [ -f "$REPO_DIR/server/index.js" ] || die "没找到 server/index.js，请在仓库根目录里跑这个脚本。"
 [ -f "$REPO_DIR/deploy/nginx.conf" ] || die "没找到 deploy/nginx.conf，代码不完整。"
 
+# ---------- 0.5 开关 ----------
+#
+# 四个开关都走环境变量，默认值和没有开关的时候完全一样。
+# 要加新开关就照这个写法：默认值 + 前置校验 + 在下面每一步里判断，
+# 千万别让「没传开关」的路径行为和以前不一样。
+
+SKIP_NGINX="${SKIP_NGINX:-0}"   # 1 = 完全不碰 nginx（反代 / 面板自己管）
+SKIP_UFW="${SKIP_UFW:-0}"       # 1 = 完全不碰 ufw
+PORT="${PORT:-3001}"            # 后端监听端口
+HOST="${HOST:-127.0.0.1}"       # 后端监听地址，0.0.0.0 = 直接对外
+
+# 只认 0/1。写成 SKIP_NGINX=true 这种「看着像开了」的值就直接报错 ——
+# 否则用户以为跳过了 nginx，装完才发现两套 nginx 又在抢 80 端口。
+for __sw in SKIP_NGINX SKIP_UFW; do
+    case "${!__sw}" in
+        0 | 1) ;;
+        *) die "$__sw 只能是 0 或 1（当前是「${!__sw}」）" ;;
+    esac
+done
+
+case "$PORT" in
+    '' | *[!0-9]*) die "PORT 只能是数字（当前是「$PORT」）" ;;
+esac
+# 服务以 www-data 跑，绑不了 1024 以下的特权端口（80 / 443 也归 nginx）
+if [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+    die "PORT 要在 1024-65535 之间（当前是 $PORT）"
+fi
+
+# 只允许这两个。写 ::1 / 具体网卡 IP 之类的会让脚本里的健康检查
+# （打 127.0.0.1）和 ufw 判断对不上，不如直接拦住。
+case "$HOST" in
+    127.0.0.1 | 0.0.0.0) ;;
+    *) die "HOST 只能是 127.0.0.1（默认，前面挂反代）或 0.0.0.0（后端直接对外）。当前是「$HOST」" ;;
+esac
+
+# ---------- 0.6 已经装过的话，端口以 server/.env 为准 ----------
+#
+# 这段必须在任何用到 $PORT 的地方之前跑（ufw、健康检查、nginx 模板都吃它）。
+# 不这么做的话会出现最难查的错配：服务还在旧端口上跑，脚本却去新端口做健康检查、
+# 还把 nginx 的 proxy_pass 改到新端口 —— 装完访客全是 502，脚本自己却报成功。
+ENV_FILE="$APP_DIR/server/.env"
+if [ -f "$ENV_FILE" ]; then
+    ENV_PORT="$(sed -n 's/^PORT=//p' "$ENV_FILE" 2>/dev/null | tr -d '"[:space:]' | tail -n1 || true)"
+    case "$ENV_PORT" in
+        '' | *[!0-9]*) ENV_PORT="" ;;
+    esac
+    if [ -n "$ENV_PORT" ] && [ "$ENV_PORT" != "$PORT" ]; then
+        warn "server/.env 里已经是 PORT=$ENV_PORT，本次沿用（不覆盖已装好的配置）"
+        warn "真要换端口：改 $ENV_FILE 的 PORT，同步改 nginx 的 proxy_pass，"
+        warn "再 systemctl restart $SERVICE —— 三处漏一处就是 502"
+        PORT="$ENV_PORT"
+    fi
+    # HOST 同理：.env 里是 0.0.0.0 的话，本次也得知道，否则 ufw 那步会少开一个口子
+    ENV_HOST="$(sed -n 's/^HOST=//p' "$ENV_FILE" 2>/dev/null | tr -d '"[:space:]' | tail -n1 || true)"
+    case "$ENV_HOST" in
+        127.0.0.1 | 0.0.0.0) HOST="$ENV_HOST" ;;
+    esac
+fi
+
 # 宝塔 / 类似面板自带一套 nginx（/www/server/nginx），和本脚本要装的 apt nginx
 # 都在抢 80 端口，两套没法共存（一个端口不可能同时归两个服务）。
 # 检测到就提前说明白，别等装完才发现站点打不开、排查半天。
 if [ -d /www/server/nginx ] || [ -d /www/server/panel ] || command -v bt >/dev/null 2>&1; then
-    warn "检测到宝塔面板（它自带一套 nginx）。"
-    warn "这脚本会再装一套 apt nginx，两套会抢 80 端口互相打架（bind() to 0.0.0.0:80 failed）。"
-    warn "两条路，选一个："
-    warn "  1) 用宝塔托管本站点（推荐，以后宝塔还能加别的网站）"
-    warn "     别跑本脚本了，照 README「宝塔面板」一节做 —— 脚本里另外几步"
-    warn "     （装 node、起 resume-api 服务）可以单独手动做，或先跑本脚本再跳过 nginx。"
-    warn "  2) 坚持用本脚本：先去宝塔里把它的 nginx 停掉并关闭开机自启"
-    warn "     （软件商店 → Nginx → 停止 / 设置），再回来跑。"
-    warn "────────────────────────────────────────────────────"
+    if [ "$SKIP_NGINX" = "1" ]; then
+        warn "检测到宝塔面板，SKIP_NGINX=1：本次不装 nginx、不碰 80/443、不申请证书，没有冲突。"
+        warn "装完之后在面板里加站点："
+        warn "  根目录    $APP_DIR/web"
+        warn "  反代      /api/ → http://127.0.0.1:$PORT"
+        warn "  整段配置和几个坑见 README 的「宝塔面板」一节"
+        warn "────────────────────────────────────────────────────"
+    else
+        warn "检测到宝塔面板（它自带一套 nginx）。"
+        warn "这脚本会再装一套 apt nginx，两套会抢 80 端口互相打架（bind() to 0.0.0.0:80 failed）。"
+        warn "两条路，选一个："
+        warn "  1) 用宝塔托管本站点（推荐，以后宝塔还能加别的网站）"
+        warn "     让本脚本只装后端、nginx 归面板："
+        warn "         sudo SKIP_NGINX=1 bash deploy/install.sh"
+        warn "     然后照 README「宝塔面板」一节在面板里加站点。"
+        warn "  2) 坚持用本脚本管 nginx：先去宝塔里把它的 nginx 停掉并关闭开机自启"
+        warn "     （软件商店 → Nginx → 停止 / 设置），再回来跑。"
+        warn "────────────────────────────────────────────────────"
+    fi
 fi
 
 # ---------- 1. 问几个问题 ----------
@@ -85,8 +164,14 @@ ask_secret() {  # 同上，但输入不回显
 
 log "准备部署到 $APP_DIR"
 
-ask DOMAIN "域名或公网 IP（nginx 的 server_name）"
-[ -n "$DOMAIN" ] || die "必须给一个域名或 IP。"
+if [ "$SKIP_NGINX" = "1" ]; then
+    warn "SKIP_NGINX=1：不装 nginx、不申请证书，静态文件交给你自己的反代托管"
+    # 收尾那段要打印地址，set -u 下没定义会直接炸在最后一步
+    DOMAIN="${DOMAIN:-}"
+else
+    ask DOMAIN "域名或公网 IP（nginx 的 server_name）"
+    [ -n "$DOMAIN" ] || die "必须给一个域名或 IP。"
+fi
 
 # 回车就用 123456。图省事可以，但站点是公开的，后台谁都能登 ——
 # 真上线的话强烈建议在这里填一个自己的密码，或者装完去改 server/.env。
@@ -102,15 +187,19 @@ esac
 [ ${#ADMIN_PASSWORD} -ge 6 ] || die "密码太短了，至少 6 位。"
 [ "$ADMIN_PASSWORD" = "$DEFAULT_PASSWORD" ] && WEAK_PASSWORD=1 || WEAK_PASSWORD=0
 
-# 只有「像域名」才申请证书；纯 IP 没法签，直接跳过
+# 只有「像域名」才申请证书；纯 IP 没法签，直接跳过。
+# SKIP_NGINX=1 时连 certbot 都不装 —— Debian/Ubuntu 的 python3-certbot-nginx
+# 依赖 nginx 包，装了会把 apt nginx 一起拖回来，正好又变成抢 80 端口那件事。
 WANT_HTTPS=0
-if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [ "$SKIP_NGINX" = "1" ]; then
+    : # 没装 nginx，certbot --nginx 用不了；证书归面板 / 你自己的反代
+elif [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     warn "server_name 是 IP，跳过 HTTPS（IP 签不了证书）"
 elif [ "${SKIP_HTTPS:-0}" = "1" ]; then
     warn "SKIP_HTTPS=1，跳过 HTTPS"
 else
     ask EMAIL "邮箱（申请 Let's Encrypt 证书用，留空则不配 HTTPS）"
-    [ -n "$EMAIL" ] && WANT_HTTPS=1
+    if [ -n "$EMAIL" ]; then WANT_HTTPS=1; fi
 fi
 
 # ---------- 2. 系统依赖 ----------
@@ -194,17 +283,39 @@ echo "    apt-get update（国内机器走默认源可能要几分钟，会刷�
 apt-get update -q
 
 wait_for_dpkg
-apt-get install -y -q ca-certificates curl gnupg openssl xz-utils nginx
+# SKIP_NGINX=1 时连 nginx 包都不装。apt 装它会顺手 enable + start，
+# 下次开机就绑上 0.0.0.0:80 —— 正是这个开关要避免的那件事，
+# 而且发生在脚本刚说完「已跳过 nginx」之后，最难解释。
+APT_PKGS="ca-certificates curl gnupg openssl xz-utils"
+if [ "$SKIP_NGINX" != "1" ]; then
+    APT_PKGS="$APT_PKGS nginx"
+fi
+# 故意不加引号：让 shell 按空格拆成多个包名
+# shellcheck disable=SC2086
+apt-get install -y -q $APT_PKGS
 
 # 系统防火墙。放行 SSH 再 enable，顺序反了会把自己关在门外。
 # 注意：这只管机器里的 ufw，云厂商控制台的**安全组**得你自己去开 80/443，
 # 阿里云腾讯云的实例默认只开 22，不开的话外面照样访问不到。
-if command -v ufw >/dev/null 2>&1; then
+if [ "$SKIP_UFW" = "1" ]; then
+    warn "SKIP_UFW=1，不动防火墙。自己确认这些端口是通的：22（SSH）、80 / 443"
+    warn "（云厂商控制台的**安全组**是另一回事，脚本管不了）"
+elif command -v ufw >/dev/null 2>&1; then
     ufw allow OpenSSH >/dev/null 2>&1 || true
     ufw allow 80/tcp >/dev/null 2>&1 || true
     ufw allow 443/tcp >/dev/null 2>&1 || true
+    # 后端直接对外时才开这个口子。走反代的话反代和 node 在同一台机器上，
+    # 把后端端口暴露到公网纯属多余。
+    if [ "$HOST" != "127.0.0.1" ]; then
+        ufw allow "$PORT"/tcp >/dev/null 2>&1 || true
+    fi
     ufw --force enable >/dev/null 2>&1 || true
-    ok "ufw 已放行 22 / 80 / 443"
+    if [ "$HOST" != "127.0.0.1" ]; then
+        ok "ufw 已放行 22 / 80 / 443 / $PORT（HOST=$HOST，后端直接对外）"
+    else
+        # SKIP_NGINX=1 时 80/443 是留给面板/反代自己那套 nginx 的，别关
+        ok "ufw 已放行 22 / 80 / 443"
+    fi
 fi
 
 # node 18 起步：mupdf 和 express 都要它。
@@ -329,8 +440,8 @@ else
 ADMIN_PASSWORD="$ADMIN_PASSWORD"
 SESSION_SECRET="$SECRET"
 TOKEN_TTL_HOURS=168
-PORT=3001
-HOST=127.0.0.1
+PORT=$PORT
+HOST=$HOST
 MAX_UPLOAD_MB=5
 MAX_PDF_MB=10
 BACKUP_INTERVAL_MINUTES=10
@@ -380,35 +491,61 @@ systemctl is-active --quiet "$SERVICE" || {
 }
 ok "$SERVICE 正在运行"
 
-curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 \
-    && ok "API 健康检查通过" \
+curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 \
+    && ok "API 健康检查通过（127.0.0.1:$PORT）" \
     || warn "API 没响应，journalctl -u $SERVICE -n 50 看看"
 
 # ---------- 7. nginx ----------
 
-log "配置 nginx"
-sed -e "s|server_name resume.example.com;|server_name $DOMAIN;|" \
-    -e "s|root /opt/resume/web;|root $APP_DIR/web;|" \
-    "$APP_DIR/deploy/nginx.conf" > "/etc/nginx/sites-available/$SITE_NAME"
+NGINX_SITE="/etc/nginx/sites-available/$SITE_NAME"
 
-ln -sf "/etc/nginx/sites-available/$SITE_NAME" "/etc/nginx/sites-enabled/$SITE_NAME"
-# 默认站点会抢 80 端口，先让开
-rm -f /etc/nginx/sites-enabled/default
+if [ "$SKIP_NGINX" = "1" ]; then
+    log "跳过 nginx（SKIP_NGINX=1）"
+    ok "静态文件交给你自己的反代：根目录 $APP_DIR/web，/api/ 转给 127.0.0.1:$PORT"
+else
+    log "配置 nginx"
 
-if ! nginx -t >/dev/null 2>&1; then
-    # 有些小厂的机器没开 IPv6，listen [::]:80 会让 nginx -t 直接失败
-    warn "nginx 配置检查没过，去掉 IPv6 监听再试一次"
-    sed -i '/listen \[::\]:80;/d' "/etc/nginx/sites-available/$SITE_NAME"
+    # 已经配过 HTTPS 的站点文件里带着 certbot 写进去的 listen 443 段和 80→443 跳转。
+    # 直接覆盖会把 HTTPS 弄没，而 nginx -t 照样通过 —— 症状是「更新完突然只剩 http」。
+    if [ -f "$NGINX_SITE" ] && grep -q 'listen 443' "$NGINX_SITE"; then
+        warn "$NGINX_SITE 里已经有 HTTPS 配置（certbot 写进去的），本次不覆盖它"
+        warn "只是要改端口的话："
+        warn "  sudo sed -i 's|proxy_pass http://127.0.0.1:[0-9]*;|proxy_pass http://127.0.0.1:$PORT;|' $NGINX_SITE"
+        warn "  sudo nginx -t && sudo systemctl reload nginx"
+    else
+        sed -e "s|server_name resume.example.com;|server_name $DOMAIN;|" \
+            -e "s|root /opt/resume/web;|root $APP_DIR/web;|" \
+            -e "s|proxy_pass http://127.0.0.1:3001;|proxy_pass http://127.0.0.1:$PORT;|" \
+            "$APP_DIR/deploy/nginx.conf" > "$NGINX_SITE"
+
+        # sed 没匹配上时一声不吭，nginx 照样能 reload，只是 /api/ 全 502 ——
+        # 而后端健康检查一切正常，是最难查的那种。所以这里必须验一下。
+        grep -q "proxy_pass http://127.0.0.1:$PORT;" "$NGINX_SITE" \
+            || die "nginx 配置里的 proxy_pass 没改成 $PORT（deploy/nginx.conf 的格式被改过？）。
+      不改就 reload 的话 /api/ 会全部 502，后端却是好的。手动改：
+        sudo sed -i 's|proxy_pass http://127.0.0.1:[0-9]*;|proxy_pass http://127.0.0.1:$PORT;|' $NGINX_SITE
+        sudo nginx -t && sudo systemctl reload nginx"
+    fi
+
+    ln -sf "$NGINX_SITE" "/etc/nginx/sites-enabled/$SITE_NAME"
+    # 默认站点会抢 80 端口，先让开
+    rm -f /etc/nginx/sites-enabled/default
+
+    if ! nginx -t >/dev/null 2>&1; then
+        # 有些小厂的机器没开 IPv6，listen [::]:80 会让 nginx -t 直接失败
+        warn "nginx 配置检查没过，去掉 IPv6 监听再试一次"
+        sed -i '/listen \[::\]:80;/d' "$NGINX_SITE"
+    fi
+    nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx 配置有问题，见上。"; }
+
+    # 有的人 apt 装 nginx 时没自动启动它（装到一半被打断就会这样），
+    # reload 一个没在跑的服务会直接报错。所以先 ensure 起来 + 开机自启，
+    # 然后 reload-or-restart：在跑就热加载，没跑就启动。
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl reload-or-restart nginx
+    systemctl is-active --quiet nginx || die "nginx 起不来，journalctl -u nginx -n 30 看看。"
+    ok "nginx 已加载 $SITE_NAME"
 fi
-nginx -t >/dev/null 2>&1 || { nginx -t; die "nginx 配置有问题，见上。"; }
-
-# 有的人 apt 装 nginx 时没自动启动它（装到一半被打断就会这样），
-# reload 一个没在跑的服务会直接报错。所以先 ensure 起来 + 开机自启，
-# 然后 reload-or-restart：在跑就热加载，没跑就启动。
-systemctl enable nginx >/dev/null 2>&1 || true
-systemctl reload-or-restart nginx
-systemctl is-active --quiet nginx || die "nginx 起不来，journalctl -u nginx -n 30 看看。"
-ok "nginx 已加载 $SITE_NAME"
 
 # ---------- 8. HTTPS ----------
 
@@ -427,7 +564,30 @@ fi
 SCHEME="http"
 [ "$WANT_HTTPS" = "1" ] && SCHEME="https"
 
-cat <<EOF
+if [ "$SKIP_NGINX" = "1" ]; then
+    cat <<EOF
+
+$(printf '\033[1;32m部署完成\033[0m')（SKIP_NGINX=1：没装 nginx、没申请证书）
+
+    后端 API    http://127.0.0.1:$PORT/api/health
+    站点根目录  $APP_DIR/web              ← 反代 / 面板里填这个
+    反代目标    http://127.0.0.1:$PORT      ← 只需要把 /api/ 转过去
+    后台密码    $ADMIN_PASSWORD
+                （存在 $APP_DIR/server/.env，改完 systemctl restart $SERVICE）
+
+    还要做      1) 在你的反代 / 面板里加站点：
+                   根目录 $APP_DIR/web，/api/ 转给 127.0.0.1:$PORT
+                   （README「宝塔面板」一节有整段现成配置）
+                2) 证书在面板里申请，或者自己 certbot --nginx
+                3) 打开 你的域名/admin.html 登录 → 左边「简历 PDF」→ 传你的简历
+                   姓名、简介、技能、作品会自动跟着简历更新
+
+    日常更新    sudo bash $APP_DIR/deploy/deploy.sh
+    看日志      journalctl -u $SERVICE -f
+
+EOF
+else
+    cat <<EOF
 
 $(printf '\033[1;32m部署完成\033[0m')
 
@@ -444,6 +604,16 @@ $(printf '\033[1;32m部署完成\033[0m')
     看日志      journalctl -u $SERVICE -f
 
 EOF
+fi
+
+if [ "$HOST" != "127.0.0.1" ]; then
+    cat <<EOF
+$(printf '\033[1;33m注意：HOST=%s，后端直接对外，而且没有 HTTPS。\033[0m' "$HOST")
+    后台密码是明文在网络上传输的，别在公网上这么用 —— 要么前面挂一层带证书的
+    反代（HOST 改回 127.0.0.1），要么只在完全可信的内网里这样跑。
+
+EOF
+fi
 
 if [ "$WEAK_PASSWORD" = "1" ]; then
     cat <<EOF

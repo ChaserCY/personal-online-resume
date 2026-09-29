@@ -5,10 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>内容管理后台</title>
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- 字体走系统栈（见 admin.css 的 --font-sans），理由同前台 -->
     <link rel="stylesheet" href="./assets/admin.css">
+    <script>
+        // 在首次绘制之前跑：本地存着 token 就先别显示登录框，免得已登录的人
+        // 每次刷新都闪一下密码框。真伪由 admin.js 拿去问服务器，这里只看有没有。
+        // 这里的 key 必须和 admin.js 里的 TOKEN_KEY 一致。
+        if (localStorage.getItem('portfolio_admin_token')) {
+            document.documentElement.classList.add('has-token');
+        }
+    </script>
 </head>
 <body>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
@@ -62,6 +68,14 @@
     </aside>
 
     <main class="main-content">
+        <!-- 读不到 data.json 时由 admin.js 显示出来。此时保存是停用的 ——
+             不这样的话，页面会拿一副空骨架当内容，一点保存就把线上数据覆盖没了。 -->
+        <div class="load-error" id="load-error">
+            <strong>没能读到服务器上的站点内容，保存已停用。</strong>
+            现在的页面显示的可能是空的或过期的内容，直接改会覆盖掉线上数据。
+            先确认后端在跑（<code>systemctl status resume-api</code>），然后刷新这个页面重试。
+        </div>
+
         <!-- 个人信息 -->
         <div class="panel active" id="panel-profile">
             <div class="page-header">
@@ -246,7 +260,7 @@
                     <li>作品卡片按标题匹配，匹配上的只刷新描述和技术标签，图标、截图、外链都保留。</li>
                     <li>技能只同步说明文字，标签是手工挑的，保持不动。</li>
                     <li>支持 PDF，单个文件不超过 10MB。每次上传生成新文件名，旧文件留在服务器上不自动删除。</li>
-                    <li>同步前服务器会把上一版内容存到 <code>server/backups/data.json.bak</code>，改坏了能捞回来。</li>
+                    <li>同步前服务器会备份：<code>server/backups/data.json.bak</code> 是上一版，同目录的 <code>data-*.json</code> 是按时间留的快照，改坏了能捞回来。</li>
                 </ul>
             </div>
         </div>
@@ -286,15 +300,16 @@
 
     <div class="toast" id="toast"></div>
 
-    <!-- 访问保护 -->
-    <div id="auth-screen" style="position: fixed; inset: 0; background: var(--bg-secondary); z-index: 3000; display: flex; align-items: center; justify-content: center;">
-        <div style="background: var(--bg-card); padding: 3rem; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); text-align: center; max-width: 400px; width: 90%;">
-            <div style="font-size: 3rem; margin-bottom: 1.5rem;">🔐</div>
-            <h2 style="font-family: 'Google Sans', sans-serif; font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary);">内容管理后台</h2>
-            <p style="color: var(--text-tertiary); margin-bottom: 2rem; font-size: 0.9rem;">请输入管理员密码</p>
-            <input type="password" id="auth-password" class="form-input" placeholder="输入密码" style="margin-bottom: 1rem; text-align: center;" onkeydown="if(event.key==='Enter')checkAuth()">
-            <button class="btn btn-primary" style="width: 100%;" onclick="checkAuth()">进入</button>
-            <p id="auth-error" style="color: #ea4335; margin-top: 1rem; font-size: 0.9rem; display: none;">密码错误</p>
+    <!-- 访问保护。显示与否由 admin.css 的 .auth-screen 决定，样式都在那边 -->
+    <div class="auth-screen" id="auth-screen">
+        <div class="auth-card">
+            <div class="auth-emoji">🔐</div>
+            <h2 class="auth-title">内容管理后台</h2>
+            <p class="auth-hint">请输入管理员密码</p>
+            <input type="password" id="auth-password" class="form-input auth-input"
+                   placeholder="输入密码" onkeydown="if(event.key==='Enter')checkAuth()">
+            <button class="btn btn-primary auth-submit" onclick="checkAuth()">进入</button>
+            <p id="auth-error" class="auth-error">密码错误</p>
         </div>
     </div>
 

@@ -24,6 +24,14 @@
 
         document.getElementById('year').textContent = new Date().getFullYear();
 
+        // 内容来自 data.json，会被拼进 innerHTML。里面的 < & " 会把结构撑坏
+        // （项目描述里写个 C++ <algorithm> 就能让卡片错位），插进 HTML 的文本都过这道。
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
+
         // Load Data
         let siteData = {};
         async function loadData() {
@@ -59,8 +67,7 @@
 
             // Hero
             document.title = p.name ? `${p.name} · 个人简历` : '个人简历 · 作品集';
-            document.getElementById('nav-logo').textContent = 'Online Resume';
-            document.getElementById('hero-title').innerHTML = `您好，我是 <span>${p.name || ''}</span>`;
+            document.getElementById('hero-title').innerHTML = `您好，我是 <span>${esc(p.name)}</span>`;
             document.getElementById('hero-subtitle').textContent = p.subtitle || '';
             document.getElementById('footer-name').textContent = p.name || '';
 
@@ -90,8 +97,8 @@
                     <div class="about-card">
                         ${title ? `<div class="about-card-icon">${ABOUT_ICONS[title] || '📌'}</div>` : ''}
                         <div class="about-card-body">
-                            ${title ? `<div class="about-card-title">${title}</div>` : ''}
-                            <p class="about-card-text">${body}</p>
+                            ${title ? `<div class="about-card-title">${esc(title)}</div>` : ''}
+                            <p class="about-card-text">${esc(body)}</p>
                         </div>
                     </div>`;
             }).join('');
@@ -102,11 +109,11 @@
             if (t.position || t.city || t.salary) {
                 jobTargetEl.innerHTML = `
                     <div class="job-target-label">求职意向</div>
-                    <div class="job-target-value">${t.position || ''}</div>
+                    <div class="job-target-value">${esc(t.position)}</div>
                     <div class="job-target-meta">
-                        ${t.city ? `<span class="job-target-meta-item">📍 ${t.city}</span>` : ''}
-                        ${t.salary ? `<span class="job-target-meta-item">💰 ${t.salary}</span>` : ''}
-                        ${t.type ? `<span class="job-target-meta-item">⏰ ${t.type}</span>` : ''}
+                        ${t.city ? `<span class="job-target-meta-item">📍 ${esc(t.city)}</span>` : ''}
+                        ${t.salary ? `<span class="job-target-meta-item">💰 ${esc(t.salary)}</span>` : ''}
+                        ${t.type ? `<span class="job-target-meta-item">⏰ ${esc(t.type)}</span>` : ''}
                     </div>
                 `;
                 jobTargetEl.style.display = 'block';
@@ -120,11 +127,11 @@
                 const note = Array.isArray(val) ? '' : (val.note || '');
                 return `
                 <div class="skill-card">
-                    <h4>${cat}</h4>
+                    <h4>${esc(cat)}</h4>
                     <div class="skill-tags">
-                        ${tags.map(item => `<span class="skill-tag">${item}</span>`).join('')}
+                        ${tags.map(item => `<span class="skill-tag">${esc(item)}</span>`).join('')}
                     </div>
-                    ${note ? `<p class="skill-note">${note}</p>` : ''}
+                    ${note ? `<p class="skill-note">${esc(note)}</p>` : ''}
                 </div>`;
             }).join('');
             document.getElementById('skills-grid').innerHTML = skillsHtml;
@@ -133,28 +140,34 @@
             const games = siteData.games || [];
             document.getElementById('games-grid').innerHTML = games.map((game, i) => `
                 <div class="card" onclick="openGame(${i})">
-                    <div class="card-icon">${game.icon || '🎮'}</div>
-                    <h3 class="card-title">${game.title}</h3>
-                    <p class="card-desc">${game.description}</p>
+                    <div class="card-icon">${esc(game.icon || '🎮')}</div>
+                    <h3 class="card-title">${esc(game.title)}</h3>
+                    <p class="card-desc">${esc(game.description)}</p>
                     <div class="card-tags">
-                        ${(game.tech || []).map(t => `<span class="card-tag">${t}</span>`).join('')}
+                        ${(game.tech || []).map(t => `<span class="card-tag">${esc(t)}</span>`).join('')}
                     </div>
                 </div>
             `).join('');
 
-            // Videos
+            // Videos —— 点击播放：不嵌 iframe，先显示占位，点 ▶ 才加载播放器。
+            // 不点视频的访客不会加载 B 站的播放器脚本（页面更快，控制台也没有
+            // B 站那堆 fingerprint 噪音 —— 那是 iframe 内部脚本打的，父页面
+            // 屏蔽不了，只能不加载）。
             const videos = siteData.videos || [];
             if (videos.length > 0) {
                 document.getElementById('videos-grid').innerHTML = videos.map((video, i) => {
                     const bvid = video.bvid || (video.url || '').match(/BV[a-zA-Z0-9]+/)?.[0] || '';
-                    const embedUrl = bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&page=1` : '';
-                    if (!embedUrl) return '';
+                    if (!bvid) return '';
                     return `
-                        <div class="video-card" style="cursor:default">
-                            <iframe src="${embedUrl}" allowfullscreen style="width:100%;aspect-ratio:16/9;border:none;border-radius:var(--radius-md) var(--radius-md) 0 0;"></iframe>
+                        <div class="video-card">
+                            <div class="video-thumbnail" id="video-thumb-${i}">
+                                <div class="video-placeholder" onclick="playVideo(${i})" title="点击播放">
+                                    <div class="video-play-btn">▶</div>
+                                </div>
+                            </div>
                             <div class="video-info">
-                                <h3 class="video-title">${video.title}</h3>
-                                ${video.description ? `<p class="video-desc">${video.description}</p>` : ''}
+                                <h3 class="video-title">${esc(video.title)}</h3>
+                                ${video.description ? `<p class="video-desc">${esc(video.description)}</p>` : ''}
                             </div>
                         </div>
                     `;
@@ -165,10 +178,11 @@
 
             // Footer Socials
             document.getElementById('footer-social').innerHTML = (p.socialLinks || []).map(link => {
-                const displayVal = link.url.replace(/^mailto:/, '').replace(/^tel:/, '');
+                // url 可能缺失（手填的 data.json 里漏一个字段），别让它把整个渲染打断
+                const displayVal = (link.url || '').replace(/^mailto:/, '').replace(/^tel:/, '');
                 return `<div class="social-item" onclick="toggleSocial(this)">
-                    <span class="social-name">${link.name}</span>
-                    <span class="social-reveal"><span class="social-value">${displayVal}</span></span>
+                    <span class="social-name">${esc(link.name)}</span>
+                    <span class="social-reveal"><span class="social-value">${esc(displayVal)}</span></span>
                 </div>`;
             }).join('');
         }
@@ -181,30 +195,19 @@
             el.classList.toggle('open', !wasOpen);
         }
 
-        // Modal Logic
-        function openVideo(index) {
+        // 点击播放：把占位换成真正的 B 站播放器。
+        // 播放器是 iframe，挂上去之后它的内部脚本才跑起来（包括那几行
+        // fingerprint 噪音）—— 那是访客主动点了才发生，且不影响页面本身。
+        function playVideo(index) {
             const video = siteData.videos[index];
             if (!video) return;
-            document.getElementById('video-modal-title').textContent = video.title;
-            const bvid = video.bvid || video.url?.match(/BV[a-zA-Z0-9]+/)?.[0] || '';
-            const embedUrl = bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&page=1` : '';
-            let html = '';
-            if (embedUrl) {
-                html += `<iframe src="${embedUrl}" allowfullscreen style="width:100%;aspect-ratio:16/9;border:none;border-radius:var(--radius-md);margin-bottom:1rem;"></iframe>`;
-            }
-            if (video.description) {
-                html += `<p style="color:var(--text-secondary);white-space:pre-line;">${video.description}</p>`;
-            }
-            document.getElementById('video-modal-body').innerHTML = html;
-            document.getElementById('video-modal').classList.add('active');
-            document.body.style.overflow = 'hidden';
-        }
-
-        function closeVideoModal(e, force = false) {
-            if (force || !e || e.target.id === 'video-modal') {
-                document.getElementById('video-modal').classList.remove('active');
-                document.body.style.overflow = '';
-            }
+            const bvid = video.bvid || (video.url || '').match(/BV[a-zA-Z0-9]+/)?.[0] || '';
+            if (!bvid) return;
+            const wrap = document.getElementById('video-thumb-' + index);
+            if (!wrap || wrap.dataset.loaded) return;
+            wrap.dataset.loaded = '1';
+            // bvid 进的是 URL，后台手填的 bvid 不一定干净，编码一下
+            wrap.innerHTML = `<iframe src="https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}&page=1" allowfullscreen loading="lazy"></iframe>`;
         }
 
         // Carousel state
@@ -233,20 +236,20 @@
                     <div class="carousel-dots" id="carousel-dots"></div>
                 </div>`;
             } else if (carouselImages.length === 1) {
-                html += `<img src="${carouselImages[0]}" alt="${game.title}" style="max-width:100%;border-radius:var(--radius-md);margin-bottom:1.5rem;">`;
+                html += `<img src="${esc(carouselImages[0])}" alt="${esc(game.title)}" style="max-width:100%;border-radius:var(--radius-md);margin-bottom:1.5rem;">`;
             }
 
-            html += `<p style="color: var(--text-secondary); margin-bottom: 1.5rem; white-space: pre-line;">${game.description}</p>`;
+            html += `<p style="color: var(--text-secondary); margin-bottom: 1.5rem; white-space: pre-line;">${esc(game.description)}</p>`;
             if (game.tech && game.tech.length) {
                 html += `<div style="margin-bottom: 1.5rem;">
                     <h4 style="margin-bottom: 0.5rem;">技术栈</h4>
                     <div class="card-tags">
-                        ${game.tech.map(t => `<span class="card-tag">${t}</span>`).join('')}
+                        ${game.tech.map(t => `<span class="card-tag">${esc(t)}</span>`).join('')}
                     </div>
                 </div>`;
             }
             if (game.link) {
-                html += `<a href="${game.link}" target="_blank" class="btn btn-primary">查看详情</a>`;
+                html += `<a href="${esc(game.link)}" target="_blank" class="btn btn-primary">查看详情</a>`;
             }
 
             document.getElementById('modal-body').innerHTML = html;
@@ -272,13 +275,13 @@
 
             container.innerHTML = `
                 <div class="carousel-slide prev" onclick="carouselPrev(event)">
-                    <img src="${carouselImages[prevIdx]}" alt="prev">
+                    <img src="${esc(carouselImages[prevIdx])}" alt="prev">
                 </div>
                 <div class="carousel-slide active">
-                    <img src="${carouselImages[carouselIndex]}" alt="active">
+                    <img src="${esc(carouselImages[carouselIndex])}" alt="active">
                 </div>
                 <div class="carousel-slide next" onclick="carouselNext(event)">
-                    <img src="${carouselImages[nextIdx]}" alt="next">
+                    <img src="${esc(carouselImages[nextIdx])}" alt="next">
                 </div>
             `;
 
@@ -334,10 +337,7 @@
         }
 
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') {
-                closeModal(null, true);
-                closeVideoModal(null, true);
-            }
+            if (e.key === 'Escape') closeModal(null, true);
         });
 
         loadData();

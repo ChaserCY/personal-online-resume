@@ -38,11 +38,30 @@ if (!process.env.SESSION_SECRET) {
 
 const WEB_DIR = path.resolve(__dirname, '..', 'web');
 const DATA_FILE = path.join(WEB_DIR, 'data', 'data.json');
-const BACKUP_FILE = path.join(__dirname, 'backups', 'data.json.bak');
+const BACKUP_DIR = path.join(__dirname, 'backups');
+const BACKUP_FILE = path.join(BACKUP_DIR, 'data.json.bak');
 const UPLOAD_DIR = path.join(WEB_DIR, 'uploads');
+
+// 带时间戳的快照留几份、隔多久留一份。为什么要留，见 backupCurrent()。
+const SNAPSHOT_INTERVAL_MS = Number(process.env.BACKUP_INTERVAL_MINUTES || 10) * 60 * 1000;
+const SNAPSHOT_KEEP = Number(process.env.BACKUP_KEEP || 20);
 
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 5) * 1024 * 1024;
 const MAX_PDF_BYTES = Number(process.env.MAX_PDF_MB || 10) * 1024 * 1024;
+const MAX_PDF_MB = MAX_PDF_BYTES / 1024 / 1024;
+
+// express.json 的上限由 MAX_PDF_MB 推出来，不写死。上传走 base64，体积是原文件的
+// 4/3，外面还裹着一层 {"dataUrl":"data:...;base64,..."}，所以留一点余量。
+// 写死的话，改了 MAX_PDF_MB 却忘了改这里，PDF 会被 express 先一步挡下，
+// 报一个跟「文件太大」毫不相干的错。
+const BODY_LIMIT_MB = Math.ceil((MAX_PDF_BYTES * 4) / 3 / 1024 / 1024) + 2;
+
+// nginx 那边还有一道 client_max_body_size，Node 既看不见也改不了，只能提醒。
+// 不改的话 nginx 会先一步拒掉，请求根本到不了这里，前端只看到「上传失败」。
+if (MAX_PDF_MB > 10) {
+  console.warn(`[warn] MAX_PDF_MB 调到了 ${MAX_PDF_MB}MB。`);
+  console.warn(`[warn] 记得把 deploy/nginx.conf 里 /api/ 的 client_max_body_size 也改到 ${BODY_LIMIT_MB}m 以上。`);
+}
 
 // 白名单。不在这里的类型一律拒绝 —— 尤其是 image/svg+xml 和 text/html，
 // 它们能携带脚本，传上去就是一个存储型 XSS。
@@ -100,23 +119,75 @@ function isLockedOut(ip) {
 function recordFailure(ip) {
   const now = Date.now();
   const rec = attempts.get(ip);
-  if (!rec || rec.resetAt < now) attempts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
-  else rec.count += 1;
+  if (rec && rec.resetAt >= now) {
+    rec.count += 1;
+    return;
+  }
+  // 只在要新增记录时清一次过期的：不清理的话这个表只增不减，
+  // 被扫的机器上会一直涨。加个阈值是因为清理是 O(n)，不该每个请求都做。
+  if (attempts.size > 1000) {
+    for (const [key, old] of attempts) {
+      if (old.resetAt < now) attempts.delete(key);
+    }
+  }
+  attempts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
 }
 
 // ---------- 落盘 ----------
+
+const SNAPSHOT_RE = /^data-\d{8}-\d{6}\.json$/;
+
+function snapshotName(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `data-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+       + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+}
+
+/**
+ * 写入前留一份旧内容。
+ *
+ * 光有 data.json.bak 不够用：后台保存是 500ms 防抖的，一次编辑会话会打出十几个
+ * PUT，每个都把 .bak 覆盖成「上一个中间态」—— 等发现改坏了，.bak 里已经是坏的了，
+ * 想回滚到一个干净的版本反而没有。
+ *
+ * 所以除了 .bak（永远是上一版），再按时间间隔留几份带时间戳的快照。
+ * 回滚时挑一份早于「开始改坏」的那一刻就行。间隔是为了别把目录刷爆：
+ * 防抖保存一秒能来好几次，每次都留的话留下的全是中间态。
+ */
+async function backupCurrent() {
+  try {
+    await fsp.mkdir(BACKUP_DIR, { recursive: true });
+    await fsp.copyFile(DATA_FILE, BACKUP_FILE);
+  } catch (e) {
+    if (e.code === 'ENOENT') return; // 还没有 data.json，没什么可备份的
+    throw e;
+  }
+
+  try {
+    // 文件名是补零的，字典序就是时间序
+    const snaps = (await fsp.readdir(BACKUP_DIR)).filter(f => SNAPSHOT_RE.test(f)).sort();
+    const newest = snaps[snaps.length - 1];
+    if (newest) {
+      const { mtimeMs } = await fsp.stat(path.join(BACKUP_DIR, newest));
+      if (Date.now() - mtimeMs < SNAPSHOT_INTERVAL_MS) return;
+    }
+    await fsp.copyFile(DATA_FILE, path.join(BACKUP_DIR, snapshotName()));
+
+    const all = (await fsp.readdir(BACKUP_DIR)).filter(f => SNAPSHOT_RE.test(f)).sort();
+    for (const old of all.slice(0, Math.max(0, all.length - SNAPSHOT_KEEP))) {
+      await fsp.unlink(path.join(BACKUP_DIR, old)).catch(() => {});
+    }
+  } catch (e) {
+    // 快照没写成不该挡住建站 —— .bak 已经在上面写好了
+    console.error('[warn] 写 data.json 快照失败:', e.message);
+  }
+}
 
 async function writeDataFile(payload) {
   const json = JSON.stringify(payload, null, 2) + '\n';
   await fsp.mkdir(path.dirname(DATA_FILE), { recursive: true });
 
-  // 留一份上一版，改坏了可以直接 cp 回来
-  try {
-    await fsp.mkdir(path.dirname(BACKUP_FILE), { recursive: true });
-    await fsp.copyFile(DATA_FILE, BACKUP_FILE);
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-  }
+  await backupCurrent();
 
   // 先写临时文件再 rename：rename 是原子的，
   // 访客不会读到只写了一半的 data.json。
@@ -158,9 +229,8 @@ const app = express();
 app.disable('x-powered-by');
 // nginx 在 127.0.0.1 上转发，信任它带来的 X-Forwarded-For，限流才拿得到真实 IP
 app.set('trust proxy', 'loopback');
-// 上传走 base64，体积比原文件大约 1/3，所以这里要留够余量：
-// 10MB 的 PDF 编码后约 13.3MB。改 MAX_PDF_MB 时记得同步这里和 nginx 的 client_max_body_size。
-app.use(express.json({ limit: '20mb' }));
+// 上限跟着 MAX_PDF_MB 走，见文件开头的 BODY_LIMIT_MB
+app.use(express.json({ limit: BODY_LIMIT_MB + 'mb' }));
 
 function requireAuth(req, res, next) {
   const header = req.get('Authorization') || '';

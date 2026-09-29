@@ -280,11 +280,9 @@ function projectBody(p) {
   return lines.join('\n').trim();
 }
 
-/** 标题归一化：只取括号前的部分，方便「星轨回响(联机版)」对上「星轨回响 (多人合作射击)」 */
-const titleKey = (s) => (s || '')
-  .split(/[(（]/)[0]
-  .replace(/[\s\-_·]/g, '')
-  .toLowerCase();
+// 作品卡片的标题匹配不在这里 —— 服务端只负责认字，匹配和合并都发生在
+// web/assets/admin.js 的 applyResumePatch() 里，titleKey 的那份实现在那儿。
+// 改匹配规则（比如括号的切法）去改那一份。
 
 /**
  * @returns {{patch: object, report: string[], warnings: string[]}}
@@ -384,4 +382,4 @@ function parseResume(rows) {
   return { patch, report, warnings, projects, skills, education, activities };
 }
 
-module.exports = { extractRows, parseResume, toRows, titleKey, SECTION_HEADINGS };
+module.exports = { extractRows, parseResume, toRows, SECTION_HEADINGS };

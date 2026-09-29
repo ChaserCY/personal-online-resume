@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>个人简历 · 作品集</title>
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <!-- 字体走系统栈（见 style.css 的 --font-sans），不引 Google Fonts：
+         那个 <link> 是阻塞首屏渲染的，而 fonts.googleapis.com 在国内基本连不上，
+         访客会先白屏一段。另外这两款字体都没有中文字形，中文本来就走系统回退，
+         去掉它只影响拉丁字母和数字。 -->
     <link rel="stylesheet" href="./assets/style.css">
 </head>
 <body>
@@ -93,17 +94,6 @@
             <p style="color: var(--text-tertiary); font-size: 0.875rem;">© <span id="year"></span> <span id="footer-name"></span>. All rights reserved.</p>
         </div>
     </footer>
-
-    <!-- Video Modal -->
-    <div class="modal-overlay" id="video-modal" onclick="closeVideoModal(event)">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title" id="video-modal-title"></h3>
-                <button class="modal-close" onclick="closeVideoModal(null, true)">&times;</button>
-            </div>
-            <div class="modal-body" id="video-modal-body"></div>
-        </div>
-    </div>
 
     <!-- Game Modal -->
     <div class="modal-overlay" id="game-modal" onclick="closeModal(event)">

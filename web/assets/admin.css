@@ -1,5 +1,8 @@
 
         :root {
+            /* 系统字体栈，理由同前台（见 index.html 里的注释） */
+            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                         'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
             --bg-primary: #ffffff;
             --bg-secondary: #f8f9fa;
             --bg-tertiary: #f1f3f4;
@@ -55,7 +58,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Inter', -apple-system, sans-serif;
+            font-family: var(--font-sans);
             background: var(--bg-secondary);
             color: var(--text-primary);
             min-height: 100vh;
@@ -64,7 +67,8 @@
             overflow-x: hidden;
         }
 
-        .sidebar, .main-content, .modal-overlay, #auth-screen {
+        /* 登录遮罩不在这里 —— 它是 position:fixed 的整屏覆盖层，见文件末尾的 .auth-screen */
+        .sidebar, .main-content, .modal-overlay {
             position: relative;
             z-index: 1;
         }
@@ -86,7 +90,7 @@
         }
 
         .sidebar-logo {
-            font-family: 'Google Sans', sans-serif;
+            font-family: var(--font-sans);
             font-size: 1.2rem;
             font-weight: 700;
             background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
@@ -247,6 +251,39 @@
             padding: 2rem 3rem;
         }
 
+        /* 读不到 data.json 时的横幅（admin.js 的 showLoadError）。
+           默认藏起来，由 showLoadError() 切换内联 display。 */
+        .load-error {
+            display: none;
+            background: rgba(234, 67, 53, 0.08);
+            border: 1px solid rgba(234, 67, 53, 0.35);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.7;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .load-error strong {
+            display: block;
+            color: #ea4335;
+            margin-bottom: 0.25rem;
+        }
+
+        .load-error code {
+            background: rgba(234, 67, 53, 0.12);
+            border-radius: 4px;
+            padding: 0.1rem 0.35rem;
+        }
+
+        /* 读不到内容时把「保存」类按钮一并置灰：save() 本来就会拦下来，
+           但让人先看见按钮是灰的，比点下去才弹提示清楚。 */
+        body.load-failed .btn-success {
+            opacity: 0.45;
+            pointer-events: none;
+        }
+
         .page-header {
             display: flex;
             justify-content: space-between;
@@ -255,7 +292,7 @@
         }
 
         .page-title {
-            font-family: 'Google Sans', sans-serif;
+            font-family: var(--font-sans);
             font-size: 1.8rem;
             font-weight: 600;
             color: var(--text-primary);
@@ -264,7 +301,7 @@
         .header-actions { display: flex; gap: 0.75rem; }
 
         .btn {
-            font-family: 'Inter', sans-serif;
+            font-family: var(--font-sans);
             padding: 0.65rem 1.25rem;
             border: none;
             font-weight: 600;
@@ -314,7 +351,7 @@
         }
 
         .form-section-title {
-            font-family: 'Google Sans', sans-serif;
+            font-family: var(--font-sans);
             font-size: 1rem;
             font-weight: 600;
             color: var(--accent-purple);
@@ -359,7 +396,7 @@
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
             color: var(--text-primary);
-            font-family: 'Inter', sans-serif;
+            font-family: var(--font-sans);
             font-size: 0.95rem;
             transition: all 0.2s ease;
         }
@@ -522,7 +559,7 @@
         }
 
         .modal-title {
-            font-family: 'Google Sans', sans-serif;
+            font-family: var(--font-sans);
             font-size: 1.2rem;
             font-weight: 600;
             color: var(--text-primary);
@@ -595,4 +632,42 @@
         body.unauthenticated .main-content {
             display: none;
         }
+
+        /* ---------- 登录遮罩 ---------- */
+
+        /* 默认就是「显示」，只在本地存着 token 时才藏起来（下面那条规则）。
+           为什么不用 HTML 里的 style="display:none"：内联样式优先级最高，
+           会把 showAuthScreen() / hideAuthScreen() 的切换也一起锁死。 */
+        .auth-screen {
+            position: fixed;
+            inset: 0;
+            background: var(--bg-secondary);
+            z-index: 3000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 本地存着 token：先别弹登录框，等 admin.js 拿它去服务器校验。
+           已登录的人每次刷新都闪一下密码框，就是这段判断存在的理由
+           （<head> 里的内联脚本负责加这个类，必须在首次绘制之前跑完）。
+           token 其实过期了的话，showAuthScreen() 会用内联样式把它重新顶出来。 */
+        html.has-token .auth-screen { display: none; }
+
+        .auth-card {
+            background: var(--bg-card);
+            padding: 3rem;
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-lg);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .auth-emoji { font-size: 3rem; margin-bottom: 1.5rem; }
+        .auth-title { font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary); }
+        .auth-hint { color: var(--text-tertiary); margin-bottom: 2rem; font-size: 0.9rem; }
+        .auth-input { margin-bottom: 1rem; text-align: center; }
+        .auth-submit { width: 100%; }
+        .auth-error { color: #ea4335; margin-top: 1rem; font-size: 0.9rem; display: none; }
     

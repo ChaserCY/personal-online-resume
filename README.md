@@ -160,7 +160,7 @@ PUT /api/data  ──Bearer token──▶  server/index.js
 2. **整个同步流程不碰 `videos`。** 视频是独立的一块，和简历无关。
 
 **作品卡片按标题匹配。** 简历里的「星轨回响(联机版)」会匹配到网站上的
-「星轨回响 (多人合作射击)」（`titleKey` 只取括号前的部分），
+「星轨回响 (多人合作射击)」（`admin.js` 里的 `titleKey` 只取括号前的部分），
 匹配上就刷新描述和技术标签，图标、截图、外链保留 —— 那些是网站特有的，简历里没有。
 
 匹配不上的简历项目**会直接新建一张卡**（图标用默认的 🎮，截图和外链留空，
@@ -175,7 +175,7 @@ PUT /api/data  ──Bearer token──▶  server/index.js
 **技能分类以简历为准。** 简历里有的分类保留下来、只刷新说明文字（标签是你手写的），
 简历里没有的分类删掉。新分类的标签留空 —— 从说明文字里抠关键词不可靠，手填比乱猜好。
 
-**同步前会自动备份**到 `server/backups/data.json.bak`。
+**同步前会自动备份**到 `server/backups/data.json.bak`（上一版），更早的版本在同目录的 `data-*.json` 快照里。
 
 #### 为什么用 MuPDF 而不是 pdf.js
 
@@ -716,7 +716,7 @@ sudo certbot renew --dry-run
 - **示例作品会被清掉。** 第一次上传时，`data.seed.json` 里那 4 个虚构作品
   （以及示例的昵称 / 副标题）会被你的真实内容替换掉。
 - **技能分类以简历为准**，简历里没有的分类会删掉；标签是你手写的，只刷新说明文字。
-- 同步前会把上一版内容存到 `server/backups/data.json.bak`。
+- 同步前会把上一版内容存到 `server/backups/data.json.bak`，更早的版本在同目录的 `data-*.json` 快照里。
 
 > **一个取舍**：简历受篇幅限制，写得比网页简略。同步之后，
 > 「关于我」的卡片和作品描述会变成简历原文 —— 更准确，但比手写的短，
@@ -764,6 +764,18 @@ sudo bash /opt/resume/deploy/deploy.sh
 它用的是 `git reset --hard`，但 `web/data/data.json` 和 `web/uploads/` 都在 `.gitignore` 里，
 所以**后台改的内容和上传的图片不会被覆盖**。
 
+> **`nginx.conf` 不归 `deploy.sh` 管。** 里面的 `server_name` / `root` 是按每台机器
+> 改过的，自动覆盖会把域名冲掉，certbot 塞进去的 443 那段也会一起没。
+> 所以仓库里改了安全头、缓存策略这类东西，`deploy.sh` 只会在最后**提醒你一句**
+> （它拿 `install.sh` 装配置时记下的模板指纹比对），同步要手动做：
+>
+> ```bash
+> sudo diff -u /etc/nginx/sites-available/resume /opt/resume/deploy/nginx.conf
+> sudo cp /opt/resume/deploy/nginx.conf /etc/nginx/sites-available/resume
+> sudo nano /etc/nginx/sites-available/resume    # 把 server_name 改回你的域名
+> sudo nginx -t && sudo systemctl reload nginx
+> ```
+
 ---
 
 ## 备份与恢复
@@ -783,11 +795,19 @@ sudo cp -r /tmp/web/data /tmp/web/uploads /opt/resume/web/
 sudo chown -R www-data:www-data /opt/resume/web/data /opt/resume/web/uploads
 ```
 
-另外后端每次写入前都会把上一版存到 `server/backups/data.json.bak`，
-改坏了可以直接 `cp` 回去：
+另外后端每次写入前都会备份，改坏了可以直接 `cp` 回去。`server/backups/` 里有两样：
+
+- `data.json.bak` —— 永远是**上一版**；
+- `data-20260101-093000.json` 这样的**快照** —— 默认每 10 分钟最多留一份、留最近 20 份
+  （`server/.env` 里的 `BACKUP_INTERVAL_MINUTES` / `BACKUP_KEEP`）。
+
+为什么要快照：后台保存是 500ms 防抖的，改一轮内容会打出十几个请求，每个都把 `.bak`
+覆盖成「上一个中间态」。等发现改坏了，`.bak` 里已经是坏的了 —— 这时候挑一份早于
+「开始改坏」那刻的快照：
 
 ```bash
-sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
+ls -lt /opt/resume/server/backups/                          # 挑一份时间对得上的
+sudo cp /opt/resume/server/backups/data-20260101-093000.json /opt/resume/web/data/data.json
 ```
 
 ---
@@ -805,7 +825,7 @@ sudo cp /opt/resume/server/backups/data.json.bak /opt/resume/web/data/data.json
 | `systemctl status` 说服务起不来 | 多半是读不到 `server/.env`。它得是 `640 root:www-data`（`chown root:www-data` + `chmod 640`），`600 root:root` 会让以 www-data 运行的服务读不到 |
 | `deploy.sh` 报 `detected dubious ownership` | git 以 root 操作别人 clone 的仓库被拒了。跑一次 `sudo git config --global --add safe.directory /opt/resume`（`install.sh` 会自动加） |
 | PDF 传上去了但内容没同步 | 面板上会写明哪些章节没认出来。解析器只认固定的章节标题，见 `resume-parse.js` 顶部的 `SECTION_HEADINGS` |
-| 改坏了 `data.json` | 上一版在 `server/backups/data.json.bak`，直接 `cp` 回去 |
+| 改坏了 `data.json` | 上一版在 `server/backups/data.json.bak`；改了一轮才发现的话，挑一份更早的 `data-*.json` 快照 |
 | 服务起不来 | `journalctl -u resume-api -n 50 --no-pager`；`ExecStart` 里的 node 路径对不对 |
 
 ---

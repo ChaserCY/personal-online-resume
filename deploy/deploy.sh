@@ -11,6 +11,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/resume}"
 SERVICE="${SERVICE:-resume-api}"
 BRANCH="${BRANCH:-master}"
+SITE_NAME="${SITE_NAME:-resume}"
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
 
@@ -51,5 +52,26 @@ fi
 
 log "健康检查"
 curl -fsS http://127.0.0.1:3001/api/health && echo "" || echo "    /api/health 无响应，检查日志" >&2
+
+log "检查 nginx 配置"
+# nginx.conf 不归这个脚本管：里面的 server_name / root 是按每台机器改过的，
+# 自动覆盖会把域名冲掉，certbot 塞进去的 443 那一整段也会一起没。
+# 但这样一来，仓库里改了安全头 / 缓存策略就不会生效 —— 而且是安安静静地不生效。
+# install.sh 铺配置时记下了模板指纹，这里拿它比一下，改过了就提醒。
+NGINX_SITE="/etc/nginx/sites-available/$SITE_NAME"
+SHA_FILE="$NGINX_SITE.template-sha"
+if [ ! -f "$SHA_FILE" ]; then
+    echo "    没有 $SHA_FILE（install.sh 没跑过？），跳过"
+elif [ "$(sha256sum "$APP_DIR/deploy/nginx.conf" | cut -d' ' -f1)" = "$(cat "$SHA_FILE")" ]; then
+    echo "    仓库里的 deploy/nginx.conf 没变"
+else
+    echo "    仓库里的 deploy/nginx.conf 改过了，服务器上装的还是老那份。"
+    echo "    想同步的话手动来（下面第一条命令先看清楚改了什么）："
+    echo "        diff -u $NGINX_SITE $APP_DIR/deploy/nginx.conf"
+    echo "        cp $APP_DIR/deploy/nginx.conf $NGINX_SITE   # 完了把 server_name 改回你的域名"
+    echo "        nginx -t && systemctl reload nginx"
+    echo "    同步完更新指纹，这条提示就不再出现："
+    echo "        sha256sum $APP_DIR/deploy/nginx.conf | cut -d' ' -f1 > $SHA_FILE"
+fi
 
 log "完成"

@@ -1,6 +1,23 @@
 
         let data = {};
 
+        // 只有真的从服务器读到了内容，才允许写回去。理由见 loadData()。
+        let loadedFromServer = false;
+
+        // 数据里的内容会直接拼进 innerHTML，里面的 < & " 会把结构撑坏
+        // （项目描述里写个 C++ <algorithm> 就能让卡片错位）。插进 HTML 的文本都过这道。
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+            ));
+        }
+
+        // 把字符串放进 HTML 属性里用（data-* 的值，或 onclick 里的字符串字面量），
+        // 读的时候用 decodeURIComponent 还原。比裸的 encodeURIComponent 多编码一个
+        // 单引号 —— ' 是它的保留字符，不编码的话 onclick="fn('...')" 会被带撇号的
+        // 名字截断，删除按钮就失灵了。
+        const enc = (s) => encodeURIComponent(String(s ?? '')).replace(/'/g, '%27');
+
         // ============ 认证 ============
         // 密码存在服务器的 .env 里，前端源码中不再有任何明文密码。
         // 登录成功后服务器签发一个签名 token，所有写操作都要带上它。
@@ -8,6 +25,10 @@
         const getToken = () => localStorage.getItem(TOKEN_KEY) || '';
         const authHeaders = () => ({ 'Authorization': 'Bearer ' + getToken() });
 
+        // 这里刻意用内联样式而不是切类名：admin.css 里的
+        // `html.has-token .auth-screen { display: none }` 只是用来决定
+        // 「首次绘制时显不显示」，一旦开始校验就以这里的判断为准。
+        // 内联样式优先级最高，正好能盖过那条规则。
         function showAuthScreen() {
             document.getElementById('auth-screen').style.display = 'flex';
             document.body.classList.add('unauthenticated');
@@ -73,17 +94,35 @@
 
         async function loadData() {
             // data.json 是唯一数据源，后台和前台读的是同一个文件
+            loadedFromServer = false;
             try {
                 const resp = await fetch('./data/data.json?_=' + Date.now());
-                if (resp.ok) data = await resp.json();
+                if (resp.ok) {
+                    data = await resp.json();
+                    loadedFromServer = true;
+                } else {
+                    console.error('[admin] 读取 data.json 失败：HTTP ' + resp.status);
+                }
             } catch (e) {
-                // 服务器暂时不可用时用本地缓存兜底，至少能打开后台
+                console.error('[admin] 读取 data.json 失败：', e);
+                // 服务器暂时不可用时用本地缓存兜底，至少能打开后台看看
                 try { data = JSON.parse(localStorage.getItem('portfolio_cache') || '{}'); } catch (e2) {}
             }
 
             if (!data.profile) data.profile = { name: '', title: '', subtitle: '', avatar: '', about: [], socialLinks: [], skills: {} };
             if (!data.games) data.games = [];
             if (!data.resume) data.resume = { contact: {}, target: {}, education: [], projects: [] };
+
+            // 读不到就明说，并且停掉保存。上面这套默认值是给「本地缓存也空」
+            // 兜底的，一旦被当成「用户把内容删光了」写回服务器，线上就没了。
+            showLoadError(!loadedFromServer);
+        }
+
+        function showLoadError(failed) {
+            const el = document.getElementById('load-error');
+            if (!el) return;
+            el.style.display = failed ? '' : 'none';
+            document.body.classList.toggle('load-failed', failed);
         }
 
         function initNavigation() {
@@ -126,12 +165,19 @@
         let saveTimer = null;
 
         function save() {
+            // 内容都没读上来就写回去，等于用一副空骨架覆盖线上数据
+            if (!loadedFromServer) {
+                showToast('没能读到服务器上的内容，已阻止保存以免覆盖线上数据');
+                return;
+            }
             try { localStorage.setItem('portfolio_cache', JSON.stringify(data)); } catch (e) {}
             clearTimeout(saveTimer);
             saveTimer = setTimeout(pushToServer, 500);
         }
 
         async function pushToServer() {
+            // 再挡一道：防抖这 500ms 里状态可能已经变了
+            if (!loadedFromServer) return;
             try {
                 const res = await fetch('./api/data', {
                     method: 'PUT',
@@ -184,16 +230,16 @@
                 return `
                 <div class="form-group" style="margin-bottom: 1.25rem;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <label class="form-label" style="margin-bottom: 0.25rem;">${cat}</label>
-                        <button class="btn btn-danger btn-small" onclick="removeSkillCategory('${encodeURIComponent(cat)}')" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;">删除分类</button>
+                        <label class="form-label" style="margin-bottom: 0.25rem;">${esc(cat)}</label>
+                        <button class="btn btn-danger btn-small" onclick="removeSkillCategory('${enc(cat)}')" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;">删除分类</button>
                     </div>
                     <div class="tag-input-container">
-                        ${tags.map(item => `<span class="tag" data-cat="${encodeURIComponent(cat)}" data-item="${encodeURIComponent(item)}">${item}<span class="tag-remove" onclick="removeSkill(this)"> ×</span></span>`).join('')}
-                        <input type="text" class="tag-input" placeholder="输入后回车" data-cat="${encodeURIComponent(cat)}" onkeydown="addSkill(event, this)">
+                        ${tags.map(item => `<span class="tag" data-cat="${enc(cat)}" data-item="${enc(item)}">${esc(item)}<span class="tag-remove" onclick="removeSkill(this)"> ×</span></span>`).join('')}
+                        <input type="text" class="tag-input" placeholder="输入后回车" data-cat="${enc(cat)}" onkeydown="addSkill(event, this)">
                     </div>
                     <textarea class="form-textarea" rows="2" placeholder="一句话说明，显示在标签下方，可留空"
-                              data-cat="${encodeURIComponent(cat)}" oninput="updateSkillNote(this)"
-                              style="margin-top:0.5rem;font-size:0.85rem;">${note.replace(/<\//g, '&lt;/')}</textarea>
+                              data-cat="${enc(cat)}" oninput="updateSkillNote(this)"
+                              style="margin-top:0.5rem;font-size:0.85rem;">${esc(note)}</textarea>
                 </div>`;
             }).join('') + `
                 <div class="form-group" style="display: flex; gap: 0.5rem;">
@@ -253,8 +299,8 @@
             const container = document.getElementById('social-links-container');
             container.innerHTML = (data.profile.socialLinks || []).map((link, i) => `
                 <div class="form-group" style="display: flex; gap: 0.5rem; align-items: center;">
-                    <input type="text" class="form-input" value="${link.name}" placeholder="名称" style="flex: 1;" onchange="updateSocialLink(${i}, 'name', this.value)">
-                    <input type="text" class="form-input" value="${link.url}" placeholder="链接" style="flex: 2;" onchange="updateSocialLink(${i}, 'url', this.value)">
+                    <input type="text" class="form-input" value="${esc(link.name)}" placeholder="名称" style="flex: 1;" onchange="updateSocialLink(${i}, 'name', this.value)">
+                    <input type="text" class="form-input" value="${esc(link.url)}" placeholder="链接" style="flex: 2;" onchange="updateSocialLink(${i}, 'url', this.value)">
                     <button class="btn btn-danger btn-small" onclick="removeSocialLink(${i})">删除</button>
                 </div>
             `).join('');
@@ -331,8 +377,8 @@
                     <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
                         <span style="color:var(--text-tertiary);font-size:0.9rem;cursor:grab;">⠿</span>
                         <div style="min-width:0;">
-                            <div style="font-weight:600;font-size:0.9rem;">${v.title}</div>
-                            <div style="font-size:0.8rem;color:var(--text-tertiary);">${v.bvid || v.url}</div>
+                            <div style="font-weight:600;font-size:0.9rem;">${esc(v.title)}</div>
+                            <div style="font-size:0.8rem;color:var(--text-tertiary);">${esc(v.bvid || v.url)}</div>
                         </div>
                     </div>
                     <div style="display:flex;align-items:center;gap:0.4rem;flex-shrink:0;">
@@ -388,9 +434,9 @@
                     <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
                         <span style="color:var(--text-tertiary);font-size:0.9rem;cursor:grab;">⠿</span>
                         <div style="min-width:0;">
-                            <div style="font-weight:600;font-size:0.9rem;">${g.icon || '🎮'} ${g.title}${g.sample ? ' <span class="meta-tag" style="background:rgba(246,152,42,0.15);color:var(--accent-orange);" title="上传简历后会被自动移除">示例</span>' : ''}</div>
-                            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;">${(g.description || '').slice(0, 60)}</div>
-                            <div class="data-item-meta" style="margin-top:0.3rem;">${(g.tech || []).map(t => `<span class="meta-tag">${t}</span>`).join('')}</div>
+                            <div style="font-weight:600;font-size:0.9rem;">${esc(g.icon || '🎮')} ${esc(g.title)}${g.sample ? ' <span class="meta-tag" style="background:rgba(246,152,42,0.15);color:var(--accent-orange);" title="上传简历后会被自动移除">示例</span>' : ''}</div>
+                            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;">${esc((g.description || '').slice(0, 60))}</div>
+                            <div class="data-item-meta" style="margin-top:0.3rem;">${(g.tech || []).map(t => `<span class="meta-tag">${esc(t)}</span>`).join('')}</div>
                         </div>
                     </div>
                     <div style="display:flex;align-items:center;gap:0.4rem;flex-shrink:0;">
@@ -464,7 +510,7 @@
             }
             container.innerHTML = tempGameImages.map((img, i) => `
                 <div class="game-image-item">
-                    <img src="${img}" alt="图片${i+1}">
+                    <img src="${esc(img)}" alt="图片${i+1}">
                     <button class="remove-btn" onclick="removeGameImage(${i})" title="删除">✕</button>
                     ${i > 0 ? `<button class="order-btn order-left" onclick="moveImage(${i}, -1)" title="左移">◀</button>` : ''}
                     ${i < tempGameImages.length - 1 ? `<button class="order-btn order-right" onclick="moveImage(${i}, 1)" title="右移">▶</button>` : ''}
@@ -563,7 +609,8 @@
         // 两条规矩：
         //   1. 只有解析出来的字段才覆盖，没认出来的保持原样，绝不写空值
         //   2. 视频管理是独立的一块，整个流程不碰它
-        // 保存前服务器会把上一版留在 server/backups/data.json.bak，改坏了能捞回来。
+        // 保存前服务器会备份：server/backups/data.json.bak 是上一版，
+        // 同目录的 data-*.json 是按时间留的快照（改了一轮才发现的话得靠它们）。
 
         /** 标题归一化，只取括号前的部分：「星轨回响(联机版)」能对上「星轨回响 (多人合作射击)」 */
         function titleKey(s) {
@@ -607,6 +654,11 @@
             // 副标题简历里没有对应的东西，示例站点上那句「示例大学 · …」会一直挂在首页。
             // 所以只要内容还是示例（profile.sample），就用教育背景 + 求职意向拼一句换掉；
             // 你自己在「个人信息」里改过之后 sample 就没了，以后再传简历都不会覆盖你写的。
+            //
+            // sample 只在这里摘，而且是拼出来了才摘（原来是无条件 delete 的）：
+            // 副标题是同步流程里唯一「认不出教育背景就补不上」的字段，只要它还是示例
+            // 那句就得留着标记，下次传一份排得更好的简历还有机会补 —— 否则示例文案会
+            // 永远钉在首页，而后台那条「现在还是示例内容」的提示早就没了。
             const edu = (r.education || [])[0];
             if (edu && edu.school && data.profile.sample) {
                 const bits = [edu.school];
@@ -617,8 +669,8 @@
                 const pos = (r.target && r.target.position) || p.title;
                 data.profile.subtitle = bits.join(' · ') + (pos ? ` | ${pos}` : '');
                 changed.push('副标题');
+                delete data.profile.sample;
             }
-            delete data.profile.sample;
 
             if (r.activities) { data.resume.activities = r.activities; changed.push('在校经历'); }
             if (r.projects) { data.resume.projects = r.projects; changed.push('项目经历'); }
@@ -814,11 +866,11 @@
             c.innerHTML = !list.length ? '<p style="color: var(--text-tertiary)">暂无教育背景</p>' : list.map((e, i) => `
                 <div class="timeline-item-form">
                     <div class="timeline-item-header"><span class="timeline-item-number">#${i+1}</span><button class="btn btn-danger btn-small" onclick="deleteEducation(${i})">删除</button></div>
-                    <div class="form-group"><label class="form-label">学校</label><input type="text" class="form-input" value="${e.school||''}" onchange="updateEducation(${i}, 'school', this.value)"></div>
-                    <div class="form-group"><label class="form-label">学位</label><input type="text" class="form-input" value="${e.degree||''}" onchange="updateEducation(${i}, 'degree', this.value)"></div>
-                    <div class="form-group"><label class="form-label">主修专业</label><input type="text" class="form-input" value="${e.major||''}" onchange="updateEducation(${i}, 'major', this.value)"></div>
-                    <div class="form-group"><label class="form-label">时间</label><input type="text" class="form-input" value="${e.year||''}" onchange="updateEducation(${i}, 'year', this.value)"></div>
-                    <div class="form-group full-width"><label class="form-label">相关课程</label><textarea class="form-textarea" rows="2" onchange="updateEducation(${i}, 'courses', this.value)">${e.courses||''}</textarea></div>
+                    <div class="form-group"><label class="form-label">学校</label><input type="text" class="form-input" value="${esc(e.school)}" onchange="updateEducation(${i}, 'school', this.value)"></div>
+                    <div class="form-group"><label class="form-label">学位</label><input type="text" class="form-input" value="${esc(e.degree)}" onchange="updateEducation(${i}, 'degree', this.value)"></div>
+                    <div class="form-group"><label class="form-label">主修专业</label><input type="text" class="form-input" value="${esc(e.major)}" onchange="updateEducation(${i}, 'major', this.value)"></div>
+                    <div class="form-group"><label class="form-label">时间</label><input type="text" class="form-input" value="${esc(e.year)}" onchange="updateEducation(${i}, 'year', this.value)"></div>
+                    <div class="form-group full-width"><label class="form-label">相关课程</label><textarea class="form-textarea" rows="2" onchange="updateEducation(${i}, 'courses', this.value)">${esc(e.courses)}</textarea></div>
                 </div>
             `).join('');
         }
@@ -837,10 +889,10 @@
             c.innerHTML = !list.length ? '<p style="color: var(--text-tertiary)">暂无项目经历</p>' : list.map((p, i) => `
                 <div class="timeline-item-form">
                     <div class="timeline-item-header"><span class="timeline-item-number">#${i+1}</span><button class="btn btn-danger btn-small" onclick="deleteProject(${i})">删除</button></div>
-                    <div class="form-group"><label class="form-label">项目名称</label><input type="text" class="form-input" value="${p.name||''}" onchange="updateProject(${i}, 'name', this.value)"></div>
-                    <div class="form-group"><label class="form-label">项目角色</label><input type="text" class="form-input" value="${p.role||''}" onchange="updateProject(${i}, 'role', this.value)"></div>
-                    <div class="form-group"><label class="form-label">项目时间</label><input type="text" class="form-input" value="${p.time||''}" onchange="updateProject(${i}, 'time', this.value)"></div>
-                    <div class="form-group full-width"><label class="form-label">详细内容</label><textarea class="form-textarea" rows="3" onchange="updateProject(${i}, 'description', this.value)">${p.description||''}</textarea></div>
+                    <div class="form-group"><label class="form-label">项目名称</label><input type="text" class="form-input" value="${esc(p.name)}" onchange="updateProject(${i}, 'name', this.value)"></div>
+                    <div class="form-group"><label class="form-label">项目角色</label><input type="text" class="form-input" value="${esc(p.role)}" onchange="updateProject(${i}, 'role', this.value)"></div>
+                    <div class="form-group"><label class="form-label">项目时间</label><input type="text" class="form-input" value="${esc(p.time)}" onchange="updateProject(${i}, 'time', this.value)"></div>
+                    <div class="form-group full-width"><label class="form-label">详细内容</label><textarea class="form-textarea" rows="3" onchange="updateProject(${i}, 'description', this.value)">${esc(p.description)}</textarea></div>
                 </div>
             `).join('');
         }
@@ -875,7 +927,7 @@
         function renderTechTags(tags) {
             const container = document.getElementById('game-tech-container');
             const input = document.getElementById('game-tech-input');
-            container.innerHTML = tags.map(t => `<span class="tag">${t}<span class="tag-remove" onclick="removeTechTag('${t}')"> ×</span></span>`).join('');
+            container.innerHTML = tags.map(t => `<span class="tag">${esc(t)}<span class="tag-remove" onclick="removeTechTag('${enc(t)}')"> ×</span></span>`).join('');
             container.appendChild(input);
         }
 
@@ -885,7 +937,8 @@
             return tags;
         }
 
-        function removeTechTag(tag) {
+        function removeTechTag(encodedTag) {
+            const tag = decodeURIComponent(encodedTag);
             const tags = getCurrentTechTags().filter(t => t !== tag);
             renderTechTags(tags);
         }
@@ -933,12 +986,13 @@
         }
 
         (function initTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            if (savedTheme) {
-                document.documentElement.setAttribute('data-theme', savedTheme);
-                updateThemeButton(savedTheme);
-            } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                updateThemeButton('dark');
-            }
+            // 解析出来的主题要显式落到 data-theme 上。admin.css 里「跟随系统深色」
+            // 是靠 prefers-color-scheme 兜底的，但 toggleTheme() 读的是 data-theme ——
+            // 系统是深色、又从没手动切过的用户，data-theme 是 null，第一次点「切换」
+            // 算出来还是 dark，看着像按钮坏了（得点第二次才对）。
+            const savedTheme = localStorage.getItem('theme')
+                || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeButton(savedTheme);
         })();
     

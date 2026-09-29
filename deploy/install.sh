@@ -333,6 +333,8 @@ PORT=3001
 HOST=127.0.0.1
 MAX_UPLOAD_MB=5
 MAX_PDF_MB=10
+BACKUP_INTERVAL_MINUTES=10
+BACKUP_KEEP=20
 EOF
     # 640 root:www-data —— 服务以 www-data 跑，systemd 读 EnvironmentFile 时
     # 有的版本是按服务用户去读的，给 600 root:root 会直接起不来。
@@ -388,6 +390,13 @@ log "配置 nginx"
 sed -e "s|server_name resume.example.com;|server_name $DOMAIN;|" \
     -e "s|root /opt/resume/web;|root $APP_DIR/web;|" \
     "$APP_DIR/deploy/nginx.conf" > "/etc/nginx/sites-available/$SITE_NAME"
+
+# 记下模板的指纹，给 deploy.sh 用：仓库里的 nginx.conf 改了、服务器上装的还是
+# 老那份时它会提醒一下。为什么存指纹而不是直接 diff 两个文件 —— 装好的那份必然
+# 和模板不一样（server_name / root 被换过，certbot 还会往里塞 443 那一整段）。
+sha256sum "$APP_DIR/deploy/nginx.conf" | cut -d' ' -f1 \
+    > "/etc/nginx/sites-available/$SITE_NAME.template-sha" \
+    || warn "写指纹失败。不影响站点，只是 deploy.sh 以后不会提醒 nginx 配置变动。"
 
 ln -sf "/etc/nginx/sites-available/$SITE_NAME" "/etc/nginx/sites-enabled/$SITE_NAME"
 # 默认站点会抢 80 端口，先让开

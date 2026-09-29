@@ -106,7 +106,7 @@ PUT /api/data  ──Bearer token──▶  server/index.js
 - **只覆盖解析成功的字段。** 简历排版千变万化，认不出来就保持原样，
   绝不能写空值把线上内容清掉。
 - **同步流程不碰 `videos`。** 视频是独立的一块，和简历无关。
-  作品卡片按标题匹配（`titleKey()` 只取括号前的部分），
+  作品卡片按标题匹配（`admin.js` 里的 `titleKey()` 只取括号前的部分），
   匹配上的只刷新描述和技术标签，图标 / 截图 / 外链一律保留 ——
   那些是站点特有的，简历里没有，重建会把它们弄丢。
 
@@ -166,10 +166,12 @@ journalctl -u resume-api -f
 |---|---|
 | 页面样式全丢 / 404 | 路径被写成了绝对路径，检查有没有 `/xxx` 开头的引用 |
 | 后台改了内容，前台没变 | 浏览器缓存了 data.json；nginx 里 `location = /data/data.json` 的 `no-cache` 头还在不在 |
+| 改了 `deploy/nginx.conf`，跑完 `deploy.sh` 却没生效 | 正常 —— `deploy.sh` 不碰 nginx（`server_name` 每台机器都不一样）。它会拿模板指纹比一下，变了就打印手动同步的命令 |
+| 调大 `MAX_PDF_MB` 之后传 PDF 还是失败 | nginx 的 `client_max_body_size` 还停在 20m。后端启动时会打 `[warn]` 告诉你该改成多少（express 那边的上限是自动跟的，不用管） |
 | 后台点保存提示"保存失败" | 后端没起来（`systemctl status resume-api`）或 token 过期（重新登录） |
 | 图片上传失败 | `web/uploads/` 的属主不是 `www-data`，跑一遍 `deploy.sh` 里的 chown |
 | 登录一直失败 | `server/.env` 里的 `ADMIN_PASSWORD`；连续错 5 次会被限流 15 分钟 |
-| 改坏了 data.json | 上一版在 `server/backups/data.json.bak`，直接 `cp` 回去 |
+| 改坏了 data.json | 上一版在 `server/backups/data.json.bak`；改了一轮才发现的话，挑一份更早的 `data-*.json` 快照（见 `backupCurrent()`） |
 | 上传简历后提示"内容没能识别" | PDF 是扫描件（图片）或者排版变了。用 `node -e "require('./server/resume-parse').extractRows(require('fs').readFileSync('x.pdf')).then(r=>console.log(r.map(x=>x.text).join('\n')))"` 看看认出来的是什么 |
 | 简历内容同步错位 | `resume-parse.js` 的章节识别靠标题文字 + 缩进位置。换个模板要调 `SECTION_HEADINGS` |
 | 首页还挂着「张三」「星轨回响」 | seed 的示例内容没被清掉。检查 `data.seed.json` 里 `profile` 和各作品的 `sample: true` 还在不在，以及 `applyResumePatch` 里的删除分支 |

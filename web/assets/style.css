@@ -5,6 +5,10 @@
             --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
                          'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
             --bg-primary: #ffffff;
+            /* --bg-primary 的 R,G,B 分量。导航条要半透明，而 rgba() 接不了十六进制，
+               只能拆开存一份 —— 以前只写了 rgba(var(--bg-primary-rgb), .8) 却没定义这个
+               变量，整条声明计算时失效，导航条一直是全透明的。 */
+            --bg-primary-rgb: 255, 255, 255;
             --bg-secondary: #f8fafc;
             --bg-card: #ffffff;
             --text-primary: #0f172a;
@@ -19,10 +23,23 @@
             --radius-md: 12px;
             --radius-lg: 16px;
             --radius-full: 9999px;
+
+            /* 布局尺度。两栏主体的最大宽度和左栏宽度，改版式只动这两个数 */
+            --layout-max: 1180px;
+            /* 左栏宽度。装了「关于我」之后比原来宽了一点 —— 窄栏会把那几段文字
+               折成更多行，卡片跟着变高，得不偿失。 */
+            --profile-w: 330px;
+            --topbar-h: 64px;
+
+            /* --accent-primary 的 R,G,B 分量。横幅里那些装饰图形要半透明的强调色，
+               而 rgba() 接不了十六进制，只能拆开存一份（和 --bg-primary-rgb 同理）。
+               深色主题下换成 #818cf8 的分量，图形才跟着变浅。 */
+            --accent-rgb: 99, 102, 241;
         }
 
         [data-theme="dark"] {
             --bg-primary: #0f1115;
+            --bg-primary-rgb: 15, 17, 21;
             --bg-secondary: #16181d;
             --bg-card: #1e2028;
             --text-primary: #f8fafc;
@@ -34,6 +51,7 @@
             --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
             --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
             --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+            --accent-rgb: 129, 140, 248;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -108,21 +126,31 @@
            系统字体里没有跨平台一致的「展示体」，靠字重（700/800）拉开层次就够了。 */
         h1, h2, h3, h4 { font-family: var(--font-sans); }
 
-        /* Navbar */
+        /* ============ 顶部导航 ============ */
         /* 三栏网格：logo 靠左、导航居中、主题按钮靠右。
            不用 flex 的 space-between，是因为它把导航推到「logo 和按钮之间」，
            logo 一变长导航就跟着偏；两个 1fr 等宽才能让中间那栏相对整条导航条居中。
            grid-column 显式写死，是为了窄屏下 .nav-links 被 display:none 隐藏后，
            主题按钮不会掉进中间那栏。 */
-        nav {
+        .topbar {
             position: fixed; top: 0; left: 0; right: 0;
-            padding: 1rem 2rem;
+            height: var(--topbar-h);
+            padding: 0 2rem;
             display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
             background: rgba(var(--bg-primary-rgb), 0.8);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--border-color);
             z-index: 100;
+        }
+        /* 导航条底下那条细装饰，和横幅的圆角呼应 */
+        .topbar::after {
+            content: '';
+            position: absolute;
+            top: 100%; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-primary), transparent 70%);
+            opacity: 0.5;
         }
         .logo { grid-column: 1; justify-self: start; font-weight: 700; font-size: 1.25rem; text-decoration: none; color: var(--text-primary); }
         .nav-links { grid-column: 2; justify-self: center; display: flex; gap: 1.5rem; list-style: none; }
@@ -131,64 +159,355 @@
         .theme-toggle { grid-column: 3; justify-self: end; background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0.5rem; }
         .theme-toggle:hover { color: var(--accent-primary); }
 
-        /* Container */
-        .container { max-width: 1000px; margin: 0 auto; padding: 0 2rem; }
+        /* ============ 横幅 ============ */
+        /* 底色就是页面底色，不铺色块 —— 一整片深色压在最上面太抢眼。
+           视觉分量改由一圈纯 CSS 画的几何图形承担（见下面的 .deco-*）。
+           padding-bottom 比 padding-top 多，是给 .layout 的负 margin 上提留余量。 */
+        .banner {
+            position: relative;
+            z-index: 1;
+            min-height: 420px;
+            display: flex;
+            align-items: center;
+            /* 左右不留内边距 —— 留给 .banner-inner，这样它的内容框和下面 .layout
+               的内容框完全重合，横幅里的字和左栏卡片的左边缘才对得齐。
+               留在这里的话两者会差一个 padding 的宽度。 */
+            padding: calc(var(--topbar-h) + 4rem) 0 8rem;
+            background: var(--bg-primary);
+            overflow: hidden;
+        }
+        /* 和 .layout 同一套宽度 + 内边距，两处的内容框因此完全重合 */
+        .banner-inner {
+            position: relative;
+            z-index: 1;          /* 压在装饰图形上面，别让方块盖住标题 */
+            max-width: var(--layout-max);
+            width: 100%;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
 
-        /* Hero */
-        .hero { min-height: 50vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding-top: 4rem; }
-        .hero h1 { font-size: clamp(2.5rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; letter-spacing: -0.03em; }
-        .hero h1 span { color: var(--accent-primary); }
-        .hero p { font-size: 1.125rem; color: var(--text-secondary); max-width: 600px; margin-bottom: 2.5rem; }
+        /* ---- 装饰图形 ---- */
+        /* 全是纯 CSS 画的，没有图片、没有 SVG 文件。
+           每个 .deco 的基准旋转角走 --deco-rot，动画里统一带上它 ——
+           直接在规则里写 transform 的话会被 deco-float 的 transform 覆盖掉。 */
+        .banner-deco { position: absolute; inset: 0; pointer-events: none; }
+        .deco { position: absolute; display: block; --deco-rot: 0deg; animation: deco-float 10s ease-in-out infinite; }
+
+        /* 两团柔光，给纯白底一点纵深。压在文字后面，所以放最前面画 */
+        .deco-blob { border-radius: 50%; }
+        .deco-blob-a {
+            top: -180px; right: -140px;
+            width: 640px; height: 640px;
+            background: radial-gradient(circle, rgba(var(--accent-rgb), 0.16) 0%, rgba(var(--accent-rgb), 0.04) 45%, transparent 70%);
+            animation-duration: 16s;
+        }
+        .deco-blob-b {
+            bottom: -200px; left: -160px;
+            width: 520px; height: 520px;
+            background: radial-gradient(circle, rgba(var(--accent-rgb), 0.10) 0%, transparent 68%);
+            animation-duration: 19s;
+            animation-delay: -7s;
+        }
+
+        /* 等距立方体：三个菱形面拼出体积感，顶面最亮、右侧面最暗，
+           光从左上打过来。这是整片装饰里唯一的「立体图」。 */
+        .deco-cube {
+            top: 20%; right: 12%;
+            width: 96px; height: 96px;
+            animation-duration: 9s;
+        }
+        .deco-cube i { position: absolute; inset: 0; display: block; }
+        .cube-top   { background: rgba(var(--accent-rgb), 0.42); clip-path: polygon(50% 0%, 100% 25%, 50% 50%, 0% 25%); }
+        .cube-left  { background: rgba(var(--accent-rgb), 0.26); clip-path: polygon(0% 25%, 50% 50%, 50% 100%, 0% 75%); }
+        .cube-right { background: rgba(var(--accent-rgb), 0.14); clip-path: polygon(50% 50%, 100% 25%, 100% 75%, 50% 100%); }
+
+        /* 圆环。中间填页面底色，所以看着是空心的，不会挡住底下的柔光 */
+        .deco-ring {
+            top: 60%; right: 27%;
+            width: 52px; height: 52px;
+            border: 9px solid transparent;
+            border-radius: 50%;
+            background:
+                linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
+                linear-gradient(140deg, rgba(var(--accent-rgb), 0.55), rgba(var(--accent-rgb), 0.12)) border-box;
+            animation-duration: 12s;
+            animation-delay: -3s;
+        }
+        .deco-tri {
+            top: 17%; left: 5%;
+            width: 46px; height: 40px;
+            --deco-rot: -14deg;
+            background: linear-gradient(160deg, rgba(var(--accent-rgb), 0.34), rgba(var(--accent-rgb), 0.08));
+            clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+            animation-duration: 11s;
+            animation-delay: -5s;
+        }
+        .deco-square {
+            top: 68%; left: 40%;
+            width: 34px; height: 34px;
+            --deco-rot: 28deg;
+            border: 3px solid rgba(var(--accent-rgb), 0.26);
+            border-radius: 10px;
+            animation-duration: 8s;
+            animation-delay: -2s;
+        }
+        /* 点阵，用 radial-gradient 铺出来，不需要 9 个元素 */
+        .deco-dots {
+            bottom: 20%; left: 11%;
+            width: 64px; height: 64px;
+            background-image: radial-gradient(rgba(var(--accent-rgb), 0.38) 2px, transparent 2px);
+            background-size: 16px 16px;
+            animation-duration: 14s;
+            animation-delay: -6s;
+        }
+
+        @keyframes deco-float {
+            0%, 100% { transform: translateY(0) rotate(var(--deco-rot)); }
+            50%      { transform: translateY(-14px) rotate(var(--deco-rot)); }
+        }
+
+        /* ---- 横幅文字 ---- */
+        /* 底色回到页面底色了，文字也跟着回到主题变量，不再写死白色 */
+        .banner-tag {
+            display: inline-block;
+            padding: 0.3rem 0.9rem;
+            margin-bottom: 1.25rem;
+            border: 1px solid var(--accent-primary);
+            border-radius: var(--radius-full);
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            color: var(--accent-primary);
+            background: rgba(var(--accent-rgb), 0.07);
+        }
+        /* 数据里没这个字段时不渲染空壳子（main.js 赋空字符串就走这条） */
+        .banner-tag:empty { display: none; }
+        #banner-title {
+            font-size: clamp(2.25rem, 5vw, 3.75rem);
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.03em;
+            color: var(--text-primary);
+        }
+        /* 名字：用强调色，底下垫一条同色的粗下划线 */
+        #banner-title span {
+            color: var(--accent-primary);
+            border-bottom: 4px solid rgba(var(--accent-rgb), 0.3);
+        }
+        #banner-subtitle {
+            margin-top: 1rem;
+            max-width: 620px;
+            font-size: 1.05rem;
+            color: var(--text-secondary);
+        }
+        #banner-subtitle:empty { display: none; }
+        .banner-cta {
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            margin-top: 2rem;
+            padding: 0.6rem 1.5rem;
+            border: 2px solid var(--accent-primary);
+            border-radius: var(--radius-full);
+            color: var(--accent-primary);
+            font-weight: 600;
+            text-decoration: none;
+            transition: background 0.25s, color 0.25s, transform 0.25s;
+        }
+        .banner-cta:hover {
+            background: var(--accent-primary);
+            color: #fff;
+            transform: translateY(-2px);
+        }
+        /* 箭头循环往右飘一下，暗示「往下看」 */
+        .banner-cta::after {
+            content: '';
+            width: 0; height: 0;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            border-left: 7px solid currentColor;
+            animation: cta-arrow 1.2s ease-in-out infinite;
+        }
+        @keyframes cta-arrow {
+            0%   { opacity: 1; transform: translateX(-4px); }
+            100% { opacity: 0; transform: translateX(5px); }
+        }
+
+        /* ============ 两栏主体 ============ */
+        /* 负 margin 让卡片往横幅里收一点，和上面那行副标题贴紧些。
+           幅度不用大：横幅现在没有色块边界，上提多少在视觉上是连续的，
+           提太多反而会让左栏卡片顶到标题。
+           z-index 要高过 .banner 的 1，否则后画的横幅会盖在上面。 */
+        .layout {
+            position: relative;
+            z-index: 2;
+            max-width: var(--layout-max);
+            margin: -3rem auto 0;
+            padding: 0 2rem;
+            display: flex;
+            gap: 2rem;
+            align-items: flex-start;
+        }
+        /* align-self: flex-start 不能省 —— flex 子项默认 stretch，
+           拉满高度后 sticky 就没有可滚动的余量，看起来像没生效。 */
+        .profile-col {
+            position: sticky;
+            top: calc(var(--topbar-h) + 1.5rem);
+            align-self: flex-start;
+            width: var(--profile-w);
+            flex-shrink: 0;
+        }
+        .content-col { flex: 1; min-width: 0; }
+
+        /* ============ 左栏个人卡 ============ */
+        .profile-card {
+            padding: 2rem 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            text-align: center;
+            /* 窗口矮的时候卡片可能比视口还高，而它是粘住的 —— 底下那截
+               （正好是下载按钮）就永远滚不到。留一条兜底：真放不下时卡片内部滚动。
+               正常窗口下卡片没那么高，这条不生效，不会平白多出滚动条。 */
+            max-height: calc(100vh - var(--topbar-h) - 3rem);
+            overflow-y: auto;
+        }
+        /* 服务器连不上又没缓存时，别在左栏留一个带阴影的空盒子 */
+        .profile-card:empty { display: none; }
+        .profile-avatar {
+            width: 96px; height: 96px;
+            margin: 0 auto 1rem;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.75rem; line-height: 1;
+            background: var(--bg-secondary);
+            border: 3px solid var(--bg-card);
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px var(--border-color), var(--shadow-sm);
+            overflow: hidden;   /* 头像是照片时要裁成圆的，别让方角冒出来 */
+        }
+        /* 头像是照片时撑满整个圆框。非正方形的照片按短边裁（object-fit: cover），
+           不然会被拉变形 —— 证件照一般也不是正方的。 */
+        .profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .profile-name { font-size: 1.35rem; font-weight: 700; color: var(--text-primary); }
+        .profile-subtitle { margin-top: 0.35rem; font-size: 0.9rem; color: var(--text-tertiary); }
+        /* 虚线分隔，和板块标题那条虚线是一套。
+           卡片里现在有四条，间距收一点，加起来省出小半屏。 */
+        .profile-divider { margin: 1rem 0; border: none; border-top: 1px dashed var(--border-color); }
+
+        /* 联系方式：图标 + 值，值直接显示（不折叠）。左栏空间够，
+           而且邮箱/电话本来就是给人看的，藏起来反而要多点一下。 */
+        .profile-contact { list-style: none; text-align: left; }
+        .profile-contact li + li { margin-top: 0.55rem; }
+        .profile-contact a {
+            display: flex; align-items: center; gap: 0.6rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .profile-contact a:hover { color: var(--accent-primary); }
+        .profile-contact .contact-icon { flex-shrink: 0; font-size: 1rem; line-height: 1; }
+        /* GitHub 地址可能很长，允许在任意位置断行，别把卡片撑宽 */
+        .profile-contact .contact-text { min-width: 0; word-break: break-all; }
+
+        /* 键值对行：左边名目、右边值，两端对齐 */
+        .profile-facts { list-style: none; text-align: left; }
+        .profile-facts li { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.85rem; }
+        .profile-facts li + li { margin-top: 0.5rem; }
+        .fact-key { flex-shrink: 0; color: var(--text-tertiary); }
+        .fact-value { color: var(--text-secondary); font-weight: 500; text-align: right; word-break: break-all; }
+
+        /* 关于我。以前在右栏是一张张带图标的卡片，挪进 300px 宽的左栏之后再套
+           边框和内边距就装不下几句了，所以这里只留文字：小标题用强调色顶在段首，
+           正文跟在后面。窄栏里靠颜色和字重分层，比靠盒子分层省地方。 */
+        .profile-about { text-align: left; }
+        .about-item { font-size: 0.82rem; line-height: 1.65; color: var(--text-secondary); }
+        .about-item + .about-item { margin-top: 0.7rem; }
+        .about-lead { color: var(--accent-primary); font-weight: 600; margin-right: 0.4rem; }
+
+        .profile-actions { display: flex; justify-content: center; }
+        .profile-actions .btn { width: 100%; }
+        .profile-actions svg { margin-right: 0.5rem; }
+
+        /* ============ 右栏板块 ============ */
+        /* 板块之间靠 margin 拉开，不用 section 的 padding ——
+           这里是一条竖列，上下各留 6rem 会把右栏撑得极长。 */
+        .block { margin-bottom: 4rem; }
+        .block:last-child { margin-bottom: 0; }
+        /* 锚点跳转时给固定导航让出高度，否则标题会被压在导航条底下。
+           左栏那个 aside 也带 id（导航里的「关于我」指向它），一并算上。 */
+        .block[id], .profile-col[id] { scroll-margin-top: calc(var(--topbar-h) + 1.5rem); }
+
+        /* 板块标题：文字 ——— 编号 */
+        .block-title {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.75rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .block-rule { flex: 1; height: 0; border-top: 1px dashed var(--border-color); }
+        .block-num { font-size: 0.95rem; font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.05em; }
+
+        /* ============ 按钮 ============ */
         .btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border-radius: var(--radius-full); font-weight: 600; text-decoration: none; transition: all 0.2s; border: none; cursor: pointer; }
-        .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
         .btn-primary { background: var(--accent-primary); color: #fff; }
         .btn-primary:hover { background: var(--accent-hover); transform: translateY(-2px); box-shadow: var(--shadow-md); }
         .btn-secondary { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); }
         .btn-secondary:hover { border-color: var(--accent-primary); transform: translateY(-2px); }
 
-        /* Sections */
-        section { padding: 6rem 0; }
-        .section-title { font-size: 2rem; font-weight: 700; margin-bottom: 3rem; text-align: center; position: relative; }
-        
-        /* About */
-        .about-cards { display: flex; flex-direction: column; gap: 1rem; }
-        .about-card { display: flex; gap: 1.25rem; align-items: flex-start; padding: 1.5rem 1.75rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); transition: border-color 0.2s, box-shadow 0.2s; }
-        .about-card:hover { border-color: var(--accent-primary); box-shadow: var(--shadow-sm); }
-        .about-card-icon { flex-shrink: 0; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; line-height: 1; background: var(--bg-secondary); border-radius: var(--radius-md); }
-        .about-card-body { min-width: 0; }
-        .about-card-title { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.45rem; letter-spacing: 0.01em; }
-        .about-card-text { color: var(--text-secondary); line-height: 1.75; }
+        /* ============ 技能 ============ */
+        /* 以前是一格一格的等高卡片，问题出在 grid-auto-rows: 1fr —— 它让最高的那张
+           决定所有卡片的高度，标签少的卡片底下全空着；七类技能铺三行，一屏放不下，
+           而且类名散在各自的卡片里，扫读时眼睛要来回跳。
+           改成一行一类：类名固定宽度靠左、对齐成一列，标签和说明在右边。
+           七行加起来比原来矮，类名一眼扫完，说明读不读由你。 */
+        .skills-list { display: flex; flex-direction: column; }
+        .skill-row {
+            display: flex; gap: 1.25rem;
+            padding: 0.9rem 0;
+            border-bottom: 1px dashed var(--border-color);
+        }
+        .skill-row:first-child { padding-top: 0; }
+        .skill-row:last-child { padding-bottom: 0; border-bottom: none; }
+        .skill-cat {
+            flex: 0 0 88px;
+            padding-top: 0.1rem;   /* 和右边第一行标签的基线对齐 */
+            font-size: 0.9rem; font-weight: 600; color: var(--text-primary);
+        }
+        .skill-body { flex: 1; min-width: 0; }
+        .skill-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+        .skill-tag { padding: 0.15rem 0.6rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-full); font-size: 0.78rem; color: var(--text-secondary); }
+        /* 一句话说明：在标签下面，字号更小、颜色更淡 —— 想细看的人往下读，
+           只想扫一遍的人跳过它也不漏信息。 */
+        .skill-note { margin-top: 0.45rem; font-size: 0.8rem; line-height: 1.6; color: var(--text-tertiary); }
+        /* 一条标签都没有的行：说明文字是这行唯一的内容，就别再当脚注渲染了，
+           提一档字号和颜色，让它看起来是正文而不是被降级的东西。 */
+        .skill-row.no-tags .skill-note { margin-top: 0; font-size: 0.85rem; color: var(--text-secondary); }
 
-        /* Skills —— grid-auto-rows: 1fr 让所有行等高，卡片大小完全一致。
-           标签多少决定了卡片最矮也得撑到最高那张的高度，多出来的空白由
-           .skill-note 的 margin-top: auto 吸收，于是各卡的虚线说明始终对齐在底部。 */
-        .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); grid-auto-rows: 1fr; gap: 1.25rem; }
-        .skill-card { display: flex; flex-direction: column; padding: 1.5rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); transition: border-color 0.2s, box-shadow 0.2s; }
-        .skill-card:hover { border-color: var(--accent-primary); box-shadow: var(--shadow-sm); }
-        .skill-card h4 { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.9rem; }
-        .skill-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.9rem; }
-        .skill-tag { padding: 0.3rem 0.7rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-full); font-size: 0.85rem; color: var(--text-secondary); }
-        /* 一句话说明：和标签之间用虚线分隔，视觉上从「清单」过渡到「解释」 */
-        .skill-note { margin-top: auto; padding-top: 0.9rem; border-top: 1px dashed var(--border-color); font-size: 0.85rem; line-height: 1.7; color: var(--text-tertiary); }
-
-        /* Job Target */
-        .job-target { margin-top: 1.5rem; margin-bottom: 1.25rem; padding: 1rem 1.25rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+        /* ============ 求职意向 ============ */
+        /* 这块现在只剩求职意向一条，没数据时连板块标题一起收掉 ——
+           否则会留一个只有「01 求职意向」的空壳。所以开关挂在板块上而不是信息条上。 */
+        #target { display: none; }
+        #target.is-visible { display: block; }
+        .job-target { padding: 1rem 1.25rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
         .job-target-label { font-size: 0.85rem; color: var(--text-tertiary); margin-bottom: 0.4rem; }
         .job-target-value { font-size: 1.05rem; font-weight: 600; color: var(--accent-primary); }
         .job-target-value span { color: var(--text-primary); }
         .job-target-meta { display: flex; gap: 1rem; margin-top: 0.4rem; flex-wrap: wrap; }
         .job-target-meta-item { font-size: 0.9rem; color: var(--text-secondary); }
 
-        /* Cards Grid */
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2rem; }
+        /* ============ 作品卡片 ============ */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.5rem; }
         .card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.5rem; transition: all 0.3s; display: flex; flex-direction: column; height: 100%; cursor: pointer; }
         .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: var(--accent-primary); }
         .card-icon { font-size: 2.5rem; margin-bottom: 1rem; }
         .card-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem; }
         .card-desc { color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 1.5rem; flex-grow: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
-        /* Video Grid */
-        .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 2rem; }
+        /* ============ 视频 ============ */
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; }
         /* 卡片本身不可点，只有缩略图上的占位层能点（见 main.js 的 playVideo），
            所以 cursor: pointer 挂在 .video-placeholder 上而不是这里。 */
         .video-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow: hidden; transition: all 0.3s; }
@@ -221,43 +540,21 @@
         .card-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; }
         .card-tag { font-size: 0.75rem; padding: 0.25rem 0.5rem; background: rgba(99, 102, 241, 0.1); color: var(--accent-primary); border-radius: var(--radius-md); font-weight: 500; }
 
-        /* Footer */
-        footer { padding: 3rem 0; text-align: center; border-top: 1px solid var(--border-color); margin-top: 4rem; }
-        .social-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: 1.5rem; }
-        .social-links a { color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: color 0.2s; }
-        .social-links a:hover { color: var(--accent-primary); }
-        .social-item { display: flex; flex-direction: column; align-items: center; cursor: pointer; }
-        .social-item .social-name { color: var(--text-secondary); font-weight: 500; transition: color 0.2s; }
-        .social-item:hover .social-name { color: var(--accent-primary); }
-        /* 点击展开联系方式。
-           以前是 display: none ↔ block，而 display 不能做过渡，所以是硬跳。
-           现在让 .social-reveal 这个 grid 容器从 0fr 过渡到 1fr ——
-           它能动画到内容的自然高度，不用像 max-height 那样猜一个够大的值。
-           0fr 那一行要真的塌成 0，里面的 .social-value 必须 overflow: hidden，
-           否则它的 min-height: auto 会把行撑住。 */
-        .social-reveal { display: grid; grid-template-rows: 0fr; margin-top: 0.3rem; transition: grid-template-rows 0.3s cubic-bezier(0.22, 0.61, 0.36, 1); }
-        .social-item.open .social-reveal { grid-template-rows: 1fr; }
-        .social-item .social-value {
-            overflow: hidden;
-            font-size: 0.85rem; color: var(--accent-primary);
-            padding: 0.25rem 0.75rem;
-            background: rgba(99,102,241,0.1);
-            border-radius: var(--radius-full);
-            user-select: all;
-            /* 胶囊本身再淡入 + 下滑一点点，和高度动画叠在一起就不生硬了 */
-            opacity: 0; transform: translateY(-6px);
-            transition: opacity 0.2s ease, transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-        }
-        .social-item.open .social-value { opacity: 1; transform: translateY(0); }
+        /* ============ 页脚 ============ */
+        /* 社交链接已经挪进左栏个人卡了，这里只剩版权一行 */
+        footer { padding: 2.5rem 2rem; margin-top: 4rem; text-align: center; border-top: 1px solid var(--border-color); }
+        .copyright { color: var(--text-tertiary); font-size: 0.875rem; }
 
         @media (prefers-reduced-motion: reduce) {
-            .social-reveal, .social-item .social-value { transition: none; }
-            .social-item .social-value { transform: none; }
+            .banner-cta::after { animation: none; }
+            /* 装饰图形停在原处。停的时候要带上基准旋转角，
+               否则会跳回 0 度，几个斜的方块瞬间变正。 */
+            .deco { animation: none; transform: rotate(var(--deco-rot)); }
             .video-play-btn { transition: none; }
             .video-placeholder:hover .video-play-btn { transform: none; }
         }
 
-        /* Modal */
+        /* ============ 弹窗 ============ */
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); z-index: 1000; display: none; align-items: center; justify-content: center; padding: 2rem; opacity: 0; transition: opacity 0.3s; }
         .modal-overlay.active { display: flex; opacity: 1; }
         .modal { background: var(--bg-card); border-radius: var(--radius-lg); width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); transform: translateY(20px); transition: transform 0.3s; border: 1px solid var(--border-color); }
@@ -267,7 +564,7 @@
         .modal-close { background: none; border: none; font-size: 1.5rem; color: var(--text-secondary); cursor: pointer; }
         .modal-body { padding: 2rem; }
 
-        /* Carousel */
+        /* ============ 轮播 ============ */
         .carousel { position: relative; width: 100%; height: 360px; margin-bottom: 1.5rem; overflow: hidden; border-radius: var(--radius-md); }
         .carousel-inner { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
         .carousel-slide { position: absolute; border-radius: var(--radius-md); overflow: hidden; transition: all 0.5s ease; object-fit: cover; }
@@ -283,14 +580,34 @@
         .carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.5); border: none; cursor: pointer; transition: background 0.2s; padding: 0; }
         .carousel-dot.active { background: #fff; width: 20px; border-radius: 4px; }
 
+        /* ============ 响应式 ============ */
+        /* 900px 以下两栏并排就挤了，改成上下堆叠。
+           左栏**不隐藏** —— 联系方式和下载按钮都在里面，藏了手机上就没入口了。
+           它变成一张普通卡片排在右栏前面。 */
+        @media (max-width: 900px) {
+            .layout { display: block; margin-top: -2rem; }
+            .profile-col { position: static; width: auto; margin-bottom: 2rem; }
+            /* 手机上卡片不再粘住，也就不需要那条高度兜底了 */
+            .profile-card { max-height: none; overflow-y: visible; }
+            .banner { padding-bottom: 5rem; }
+            /* 窄屏文字铺满整个宽度，方块和圆环会从字缝里穿出来，收掉。
+               两团柔光留着 —— 它在最底层，只会把角落染一点色，不碍事。 */
+            .deco-cube, .deco-ring, .deco-tri, .deco-square, .deco-dots { display: none; }
+            .block { margin-bottom: 3rem; }
+        }
+
         @media (max-width: 768px) {
             .carousel { height: 240px; }
             .carousel-slide.prev, .carousel-slide.next { display: none; }
             .carousel-slide.active { width: 100%; left: 0; }
-            .about-card { padding: 1.25rem; gap: 1rem; }
-            .about-card-icon { width: 38px; height: 38px; font-size: 1.1rem; }
-            .skills-grid { grid-template-columns: 1fr; }
+            /* 手机上右栏只有三百多像素宽，左边再占 88px 给类名，标签就没地方了。
+               类名改成单独一行压在标签上面。 */
+            .skill-row { display: block; }
+            .skill-cat { margin-bottom: 0.5rem; }
+            /* 导航链接在窄屏隐藏，目前没有汉堡菜单 —— 各板块就在左栏卡片下面，
+               顺着往下滚都能到，够用。要加汉堡菜单是另一轮的事。 */
             .nav-links { display: none; }
-            .hero h1 { font-size: 2.5rem; }
+            .topbar { padding: 0 1.25rem; }
+            .layout { padding: 0 1.25rem; }
+            .banner-inner { padding: 0 1.25rem; }
         }
-    

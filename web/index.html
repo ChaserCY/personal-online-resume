@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>个人简历 · 作品集</title>
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+    <script>
+        // 主题必须在首次绘制之前定下来，所以这段内联在 <head> 里，而且要放在
+        // 样式表前面。main.js 在 <body> 末尾，等它跑起来页面已经按 :root 的浅色
+        // 画过一帧了 —— 深色用户每次刷新都闪一下白屏。style.css 里没有
+        // prefers-color-scheme 兜底（只有 [data-theme="dark"]），所以这里不设的话
+        // 系统深色也一样闪。
+        // 规则和 main.js 里那份一致：存过的优先，没存过跟随系统。
+        // 隐私模式下 localStorage 可能直接抛异常，整段包一层 try。
+        (function () {
+            var t;
+            try { t = localStorage.getItem('theme'); } catch (e) {}
+            if (t !== 'dark' && t !== 'light') {
+                t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
     <!-- 字体走系统栈（见 style.css 的 --font-sans），不引 Google Fonts：
          那个 <link> 是阻塞首屏渲染的，而 fonts.googleapis.com 在国内基本连不上，
          访客会先白屏一段。另外这两款字体都没有中文字形，中文本来就走系统回退，
@@ -21,7 +38,7 @@
     </div>
     <div class="bg-glow"></div>
 
-    <nav>
+    <nav class="topbar">
         <a href="#" class="logo" id="nav-logo">Online Resume</a>
         <!-- 顺序跟着页面从上到下的板块走：关于我 → 技能 → 作品 → 视频。
              「管理」不是页面板块，是跳后台的，所以固定在最后。 -->
@@ -47,52 +64,65 @@
         </button>
     </nav>
 
-    <main class="container">
-        <section class="hero" id="home">
-            <!-- 下面的文案会被 main.js 用 data.json 里的内容覆盖，留在这里只是给
-                 禁用 JS 或数据没加载出来时一个兜底，不用改 -->
-            <h1 id="hero-title">您好，我是 <span></span></h1>
-            <p id="hero-subtitle"></p>
-            <!-- 没有配 resumePdf 时保持隐藏，避免出现点了 404 的按钮 -->
-            <div class="hero-actions" id="hero-actions" style="display:none;">
-                <a class="btn btn-primary" id="resume-download" href="#" download>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:0.5rem;">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    <span>下载简历 PDF</span>
-                </a>
-            </div>
-        </section>
+    <!-- 顶部横幅。底色就是页面底色，靠一圈纯 CSS 画的几何图形做点缀，
+         没有任何背景图和外部资源（这个项目刻意不带静态资源依赖）。
+         下面的文字会被 main.js 用 data.json 覆盖，写在这里只是禁用 JS 时的兜底。 -->
+    <section class="banner">
+        <!-- 纯装饰，对读屏器隐藏。立体的那个方块由三个面拼出来，见 style.css -->
+        <div class="banner-deco" aria-hidden="true">
+            <span class="deco deco-blob deco-blob-a"></span>
+            <span class="deco deco-blob deco-blob-b"></span>
+            <span class="deco deco-cube">
+                <i class="cube-top"></i><i class="cube-left"></i><i class="cube-right"></i>
+            </span>
+            <span class="deco deco-ring"></span>
+            <span class="deco deco-tri"></span>
+            <span class="deco deco-square"></span>
+            <span class="deco deco-dots"></span>
+        </div>
+        <div class="banner-inner">
+            <span class="banner-tag" id="banner-tag"></span>
+            <h1 id="banner-title">您好，我是 <span></span></h1>
+            <p id="banner-subtitle"></p>
+            <a href="#about" class="banner-cta">了解更多</a>
+        </div>
+    </section>
 
-        <section id="about">
-            <h2 class="section-title">关于我</h2>
-            <div id="job-target" class="job-target" style="display:none;"></div>
-            <div class="about-cards" id="about-cards"></div>
-        </section>
+    <!-- 两栏主体。左栏是粘性个人卡（内容全部由 main.js 的 renderProfileCard 生成），
+         右栏是各板块。负 margin 让它上提盖住横幅底部，见 style.css 的 .layout。 -->
+    <div class="layout">
+        <!-- 「关于我」的正文也在左栏卡片里（见 main.js 的 renderProfileCard），
+             所以导航里「关于我」指向这里 -->
+        <aside class="profile-col" id="about">
+            <div class="profile-card" id="profile-card"></div>
+        </aside>
 
-        <section id="skills">
-            <h2 class="section-title">技能</h2>
-            <div class="skills-grid" id="skills-grid"></div>
-        </section>
+        <main class="content-col">
+            <!-- 板块标题：文字 ——— 编号。编号是写死的，四个板块不会变 -->
+            <section class="block" id="target">
+                <h2 class="block-title"><span>求职意向</span><i class="block-rule"></i><span class="block-num">01</span></h2>
+                <div id="job-target" class="job-target"></div>
+            </section>
 
-        <section id="games">
-            <h2 class="section-title">游戏作品集</h2>
-            <div class="grid" id="games-grid"></div>
-        </section>
+            <section class="block" id="skills">
+                <h2 class="block-title"><span>技能</span><i class="block-rule"></i><span class="block-num">02</span></h2>
+                <div class="skills-list" id="skills-grid"></div>
+            </section>
 
-        <section id="videos">
-            <h2 class="section-title">视频展示</h2>
-            <div class="video-grid" id="videos-grid"></div>
-        </section>
-    </main>
+            <section class="block" id="games">
+                <h2 class="block-title"><span>游戏作品集</span><i class="block-rule"></i><span class="block-num">03</span></h2>
+                <div class="grid" id="games-grid"></div>
+            </section>
+
+            <section class="block" id="videos">
+                <h2 class="block-title"><span>视频展示</span><i class="block-rule"></i><span class="block-num">04</span></h2>
+                <div class="video-grid" id="videos-grid"></div>
+            </section>
+        </main>
+    </div>
 
     <footer>
-        <div class="container">
-            <div class="social-links" id="footer-social"></div>
-            <p style="color: var(--text-tertiary); font-size: 0.875rem;">© <span id="year"></span> <span id="footer-name"></span>. All rights reserved.</p>
-        </div>
+        <p class="copyright">© <span id="year"></span> <span id="footer-name"></span>. All rights reserved.</p>
     </footer>
 
     <!-- Game Modal -->

@@ -200,6 +200,7 @@
             const p = data.profile || {};
             document.getElementById('profile-name').value = p.name || '';
             document.getElementById('profile-avatar').value = p.avatar || '';
+            renderAvatarPreview();
             document.getElementById('profile-title').value = p.title || '';
             document.getElementById('profile-subtitle').value = p.subtitle || '';
             document.getElementById('profile-about').value = (p.about || []).join('\n');
@@ -548,6 +549,74 @@
             reader.readAsDataURL(file);
         }
 
+        // ===== 头像 =====
+        // Emoji 和图片共用 profile.avatar 一个字段：填 Emoji 就按文字渲染，
+        // 填图片地址就渲染成圆形照片。判断依据是「有斜杠（路径 / URL）或带图片后缀」——
+        // Emoji 两者都不占。
+        // main.js 里有一份同样的（前台渲染时也要判断），改这里记得同步过去。
+        function isAvatarImage(v) {
+            return /[\/\\]/.test(v) || /\.(png|jpe?g|gif|webp|svg|avif)(\?|#|$)/i.test(v);
+        }
+
+        function renderAvatarPreview() {
+            const box = document.getElementById('avatar-preview');
+            const v = (data.profile && data.profile.avatar) || '';
+            box.innerHTML = isAvatarImage(v) ? `<img src="${esc(v)}" alt="">` : esc(v);
+        }
+
+        // 上传即保存，不用再点「保存更改」—— 和换简历 PDF 一个道理，
+        // 传完图忘了点保存的话，图在服务器上、地址却没写进 data.json，很费解。
+        function handleAvatarUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('图片不能超过 5MB');
+                event.target.value = '';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async function (e) {
+                try {
+                    const res = await fetch('./api/upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                        body: JSON.stringify({ dataUrl: e.target.result }),
+                    });
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const { url } = await res.json();
+                    if (!data.profile) data.profile = {};
+                    // 这里不摘 profile.sample：头像不在同步流程会覆盖的字段里，
+                    // 摘了反而会让「副标题还是示例」的那条自动补齐失效。
+                    data.profile.avatar = url;
+                    document.getElementById('profile-avatar').value = url;
+                    save();
+                    renderAvatarPreview();
+                    showToast('头像已更新，前台刷新即可看到');
+                } catch (err) {
+                    showToast('图片上传失败：' + err.message);
+                } finally {
+                    document.getElementById('avatar-file').value = '';
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearAvatar() {
+            if (!data.profile) data.profile = {};
+            data.profile.avatar = '';
+            document.getElementById('profile-avatar').value = '';
+            save();
+            renderAvatarPreview();
+            showToast('头像已清除');
+        }
+
+        // 手填那一路：先更新预览，落盘还是走「保存更改」（和这个面板其它字段一致）
+        function updateAvatarField(val) {
+            if (!data.profile) data.profile = {};
+            data.profile.avatar = val;
+            renderAvatarPreview();
+        }
+
         // 简历 PDF 走和图片一样的上传通道，落盘后把地址写进 profile.resumePdf。
         // 上传即保存，不用再点「保存更改」——换简历是个独立动作，忘点保存代价太大。
         const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -617,6 +686,39 @@
             return (s || '').split(/[(（]/)[0].replace(/[\s\-_·]/g, '').toLowerCase();
         }
 
+        /**
+         * 从技能说明文字里抠标签。
+         *
+         * 简历里没有「标签」这个结构，只有「1.分类：一整句说明」，所以只能按标点切开、
+         * 剥掉开头的动词，把剩下的词当标签。抠出来的是近似值，宁可少几个也不要塞进
+         * 半句话 —— 标签是给人扫的，带连接词（并/和/与）或者超过十个字的，基本就是
+         * 句子而不是标签，一律丢掉。手写过的标签不会被这个函数碰到，见 applyResumePatch。
+         */
+        function extractTags(note) {
+            if (!note) return [];
+            const out = [];
+            for (let s of String(note).split(/[，,、；;。.\n]+/)) {
+                s = s.replace(/[（()）]/g, '').trim();
+                if (!s) continue;
+                // 剥开头的动词和程度词，可能要剥两层（「熟练使用Git」→「Git」）
+                for (let i = 0; i < 3; i++) {
+                    const t = s.replace(/^(目前是|现在|熟练使用|熟练掌握|熟练|掌握|熟悉|了解|精通|具备|使用|会用|能够|能|会|有|常用的|常见|基本的|扎实的|常用)/, '');
+                    if (t === s) break;
+                    s = t;
+                }
+                // 「Diversion等版本管理工具」这种，切到「等」为止
+                s = s.replace(/等.*$/, '');
+                s = s.replace(/^[的了和与及并]+/, '').replace(/[的了和与及并]+$/, '').trim();
+                if (s.length < 2 || s.length > 24) continue;
+                // 中文超过十个字基本是半句话了；纯英文的（Gameplay Framework）放宽
+                if (/[一-龥]/.test(s) && s.length > 10) continue;
+                if (/[并和与及]|使用|进行|能够|结合|需求|具有|经验|功能|知识|机制|能力|相关/.test(s)) continue;
+                if (!out.includes(s)) out.push(s);
+                if (out.length >= 10) break;   // 一行标签堆太多反而不好扫
+            }
+            return out;
+        }
+
         function applyResumePatch(patch) {
             const changed = [];
             const p = patch.profile || {};
@@ -626,28 +728,51 @@
             if (p.title) { data.profile.title = p.title; changed.push('标题'); }
             if (p.about && p.about.length) { data.profile.about = p.about; changed.push('关于我'); }
             if (p.socialLinks && p.socialLinks.length) {
-                data.profile.socialLinks = p.socialLinks;
-                changed.push('社交链接');
+                // 按名称合并，不整个替换。解析只认 Phone / Email / QQ / 微信四种，
+                // 整个替换的话，你在「个人信息 → 联系方式」里手加的行（知乎、博客…）
+                // 传一次简历就没了。
+                // 还是示例内容时例外：那几条本来就是虚构的，留着不如让简历里的真实信息盖掉。
+                if (data.profile.sample) {
+                    data.profile.socialLinks = p.socialLinks.slice();
+                } else {
+                    const next = (data.profile.socialLinks || []).slice();
+                    const at = {};
+                    next.forEach((l, i) => { at[String(l.name || '').toLowerCase()] = i; });
+                    for (const link of p.socialLinks) {
+                        const k = String(link.name || '').toLowerCase();
+                        if (k in at) next[at[k]] = link;
+                        else { at[k] = next.length; next.push(link); }
+                    }
+                    data.profile.socialLinks = next;
+                }
+                changed.push('联系方式');
             }
 
             if (p.skills) {
-                // 分类以简历为准：简历里有的保留下来，标签是你手写的所以只刷新说明文字；
-                // 简历里没有的分类删掉 —— 否则示例里的分类会一直留在线上，越积越多。
-                // 新分类的标签留空：从说明文字里抠关键词不可靠，手填比乱猜好。
+                // 分类以简历为准：简历里有的保留下来，简历里没有的分类删掉 ——
+                // 否则示例里的分类会一直留在线上，越积越多。
+                // 标签优先用手写的那份，只有一条都没有时才从说明文字里抠（见 extractTags）。
                 const next = {};
-                let kept = 0, added = 0;
+                let kept = 0, added = 0, derived = 0;
                 for (const [cat, note] of Object.entries(p.skills)) {
                     const old = (data.profile.skills || {})[cat];
                     const oldTags = Array.isArray(old) ? old : (old && Array.isArray(old.tags) ? old.tags : []);
                     const oldNote = old && typeof old.note === 'string' ? old.note : '';
-                    if (old) { next[cat] = { tags: oldTags, note: note || oldNote }; kept++; }
-                    else { next[cat] = { tags: [], note: note || '' }; added++; }
+                    const text = note || oldNote;
+                    let tags = oldTags;
+                    if (!tags.length) { tags = extractTags(text); if (tags.length) derived++; }
+                    next[cat] = { tags, note: text };
+                    if (old) kept++; else added++;
                 }
                 data.profile.skills = next;
-                changed.push(`技能（保留 ${kept} 类标签${added ? `，新建 ${added} 类` : ''}）`);
+                changed.push(`技能（保留 ${kept} 类${added ? `，新建 ${added} 类` : ''}`
+                    + `${derived ? `，${derived} 类标签从说明文字里自动提取` : ''}）`);
             }
 
-            if (r.contact) { Object.assign(data.resume.contact, r.contact); changed.push('联系方式'); }
+            // 邮箱 / 电话写进 resume.contact，但它只是前台 socialLinks 为空时的兜底
+            // （联系方式在「个人信息」里编辑），所以这里不单独报一条，
+            // 上面 socialLinks 那步已经报过「联系方式」了。
+            if (r.contact) Object.assign(data.resume.contact, r.contact);
             if (r.target) { Object.assign(data.resume.target, r.target); changed.push('求职意向'); }
             if (r.education) { data.resume.education = r.education; changed.push('教育背景'); }
 
@@ -663,9 +788,24 @@
             if (edu && edu.school && data.profile.sample) {
                 const bits = [edu.school];
                 if (edu.major) bits.push(edu.major);
-                // 「2024-09 至 2028-06」取最后一个年份当届别；写「至今」的还没毕业，不猜
+                // 届别 = 毕业年。正常情况就是区间里最后那个年份，但简历上那个区间
+                // 未必是「入学 → 毕业」：见过写「2024-09 至 2026-03」的，那是写到
+                // 简历更新那天为止，四年制本科实际是 2028 届。所以再拿「入学年 + 学制」
+                // 兜一下，两者取大的 —— 正常区间两个值相等，写岔了也能算对。
+                // 写「至今」的还没毕业，不猜。
                 const years = (edu.year || '').match(/20\d{2}/g);
-                if (years && years.length && !/至今/.test(edu.year)) bits.push(`${years[years.length - 1]} 届`);
+                if (years && years.length && !/至今/.test(edu.year)) {
+                    const enroll = Number(years[0]);
+                    const end = Number(years[years.length - 1]);
+                    let grad = end;
+                    // 只有一个年份时无从判断学制，照原样用
+                    if (years.length >= 2) {
+                        const span = /专科|高职/.test(edu.degree || '') ? 3
+                                   : /硕士|研究生/.test(edu.degree || '') ? 3 : 4;
+                        grad = Math.max(end, enroll + span);
+                    }
+                    bits.push(`${grad} 届`);
+                }
                 const pos = (r.target && r.target.position) || p.title;
                 data.profile.subtitle = bits.join(' · ') + (pos ? ` | ${pos}` : '');
                 changed.push('副标题');
@@ -847,11 +987,8 @@
 
         function renderResume() {
             const r = data.resume || {};
-            document.getElementById('resume-email').value = r.contact?.email || '';
-            document.getElementById('resume-phone').value = r.contact?.phone || '';
             document.getElementById('resume-location').value = r.contact?.location || '';
-            document.getElementById('resume-github').value = r.contact?.github || '';
-            
+
             document.getElementById('resume-target-position').value = r.target?.position || '';
             document.getElementById('resume-target-city').value = r.target?.city || '';
             document.getElementById('resume-target-salary').value = r.target?.salary || '';
@@ -908,12 +1045,11 @@
 
         function saveResume() {
             if (!data.resume) data.resume = {};
-            data.resume.contact = {
-                email: document.getElementById('resume-email').value,
-                phone: document.getElementById('resume-phone').value,
-                location: document.getElementById('resume-location').value,
-                github: document.getElementById('resume-github').value
-            };
+            // 只改所在地这一项。这里原来是把整个 contact 重建一遍的，
+            // 现在表单上只剩所在地了，重建会把简历解析写进来的 email / phone 抹掉
+            // （它们是前台 socialLinks 为空时的兜底）。
+            if (!data.resume.contact) data.resume.contact = {};
+            data.resume.contact.location = document.getElementById('resume-location').value;
             data.resume.target = {
                 position: document.getElementById('resume-target-position').value,
                 city: document.getElementById('resume-target-city').value,
@@ -985,14 +1121,12 @@
             }
         }
 
-        (function initTheme() {
-            // 解析出来的主题要显式落到 data-theme 上。admin.css 里「跟随系统深色」
-            // 是靠 prefers-color-scheme 兜底的，但 toggleTheme() 读的是 data-theme ——
-            // 系统是深色、又从没手动切过的用户，data-theme 是 null，第一次点「切换」
-            // 算出来还是 dark，看着像按钮坏了（得点第二次才对）。
-            const savedTheme = localStorage.getItem('theme')
-                || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            updateThemeButton(savedTheme);
-        })();
+        // data-theme 已经在 admin.html 的 <head> 里设好了（那段得赶在首次绘制前跑，
+        // 放在这里就晚了，会先按浅色画一帧）。这里只把按钮文字对上。
+        //
+        // 关键是 data-theme 必须已经落到了元素上：toggleTheme() 读的是它 ——
+        // 系统是深色、又从没手动切过的用户，如果属性是 null，第一次点「切换」
+        // 算出来还是 dark，看着像按钮坏了（得点第二次才对）。head 里那段
+        // 无论走哪条分支都会显式 setAttribute，所以这里不用再兜一次。
+        updateThemeButton(document.documentElement.getAttribute('data-theme'));
     

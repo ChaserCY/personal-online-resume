@@ -111,20 +111,24 @@ function parseHead(rows) {
   const nameRow = rows.find(r => /^[一-龥]{2,4}(\s|$)/.test(r.text) && !r.text.includes('：'));
   if (nameRow) out.name = nameRow.text.split(/[\s|]/)[0];
 
-  const pos = pick(flat, /期望职位[：:]\s*([^\s|]+)/);
-  const city = pick(flat, /期望地点[：:]\s*([^\s|]+)/);
-  const salary = pick(flat, /期望薪资[：:]\s*([^\s|]+)/);
-  const type = pick(flat, /求职状态[：:]\s*([^\s|]+)/);
+  // 标签和值之间的分隔符。模板之间差别很大：「手机：138…」「手机 | 138…」
+  // 都见过，还有写成「手机 - 138…」的（空格短横空格）。同一行的字段还会被我
+  // 用「 | 」拼起来，所以竖线也要认。一律当分隔符，中间的空格一起吃掉。
+  const SEP = '[：:|｜—~～\\s-]*';
+
+  const pos = pick(flat, new RegExp(`(?:期望职位|求职意向|意向岗位)${SEP}([^\\s|]+)`));
+  const city = pick(flat, new RegExp(`期望地点${SEP}([^\\s|]+)`));
+  const salary = pick(flat, new RegExp(`期望薪资${SEP}([^\\s|]+)`));
+  const type = pick(flat, new RegExp(`(?:求职状态|工作性质)${SEP}([^\\s|]+)`));
   if (pos) out.target.position = pos;
   if (city) out.target.city = city;
   if (salary) out.target.salary = salary;
   if (type) out.target.type = type;
 
-  // 同一行的字段被我用「 | 」拼过，所以分隔符里要允许竖线
-  const phone = pick(flat, /(?:手机|电话)[：:\s|]*(\d{11})/);
+  const phone = pick(flat, new RegExp(`(?:手机|电话)${SEP}(\\d{11})`));
   const email = pick(flat, /([\w.+-]+@[\w-]+\.[\w.]+)/);
-  const qq = pick(flat, /QQ[：:\s|]*(\d{5,12})/);
-  const wechat = pick(flat, /微信[：:\s|]*([\w-]{4,})/);
+  const qq = pick(flat, new RegExp(`QQ${SEP}(\\d{5,12})`));
+  const wechat = pick(flat, new RegExp(`微信${SEP}([\\w-]{4,})`));
   if (phone) out.contact.phone = phone;
   if (email) out.contact.email = email;
   if (phone) out.social.push({ name: 'Phone', url: 'tel:' + phone });
@@ -132,7 +136,8 @@ function parseHead(rows) {
   if (qq) out.social.push({ name: 'QQ', url: qq });
   if (wechat && wechat !== phone) out.social.push({ name: 'WeChat', url: wechat });
 
-  // 「20岁 男」这类个人标签，用来拼教育背景卡片
+  // 「20岁 男」这类个人标签。目前没有地方用它了（拼「关于我」的教育背景那段已经删掉），
+  // 留着是因为它属于抬头区本来就有的信息，将来要显示不用再解析一遍。
   const age = pick(flat, /(\d{1,2}\s*岁)/);
   if (age) out.age = age.replace(/\s+/g, '');
   out.status = type;
@@ -354,22 +359,10 @@ function parseResume(rows) {
     report.push('联系方式');
   }
 
-  // 「关于我」的三张卡片直接用解析出来的段落拼，保持和手写时一样的结构
+  // 「关于我」的段落直接用解析出来的内容拼。
+  // 只放在校经历：教育背景在左栏卡片的键值对里已经有了（院校 / 专业 / 在校），
+  // 项目在作品区有整张卡片，再在「关于我」里重复一遍只是占地方。
   const about = [];
-  if (education) {
-    const bits = [education.school, education.college, education.major && education.major + '专业']
-      .filter(Boolean).join(' ');
-    // 「2024-09 至 2028-06 本科在读」太占地方，卡片上只要年份区间
-    const years = education.year.match(/\d{4}/g) || [];
-    const yearBit = (years.length >= 2 ? `${years[0]}-${years[1]}` : years[0] || '')
-      + (education.degree ? ` ${education.degree}在读` : '');
-    const tail = [yearBit.trim(), head.age, head.status].filter(Boolean).join(' | ');
-    about.push(`教育背景：${bits}，${tail}`.replace(/，$/, ''));
-  }
-  if (projects.length) {
-    const p = projects[0];
-    about.push(`最新项目：${p.name} —— ${p.background}`.trim());
-  }
   if (activities.length) {
     const a = activities[0];
     about.push(`在校经历：${a.organization}${a.position ? a.position : ''}${a.time ? `（${a.time}）` : ''}，${a.description}`);

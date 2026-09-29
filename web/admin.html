@@ -14,6 +14,20 @@
         if (localStorage.getItem('portfolio_admin_token')) {
             document.documentElement.classList.add('has-token');
         }
+
+        // 主题同理，也得在这里定下来。admin.css 里虽然有
+        // @media (prefers-color-scheme: dark) 兜底系统深色，但「系统浅色 + 手动选了
+        // 深色」的用户 data-theme 是空的，会先按浅色画一帧再被 admin.js 改掉。
+        // 规则和 admin.js 里那份一致：存过的优先，没存过跟随系统。
+        // 隐私模式下 localStorage 可能直接抛异常，整段包一层 try。
+        (function () {
+            var t;
+            try { t = localStorage.getItem('theme'); } catch (e) {}
+            if (t !== 'dark' && t !== 'light') {
+                t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', t);
+        })();
     </script>
 </head>
 <body>
@@ -94,8 +108,19 @@
                         <input type="text" class="form-input" id="profile-name" placeholder="输入昵称">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">头像 Emoji</label>
-                        <input type="text" class="form-input" id="profile-avatar" placeholder="例如: 👨‍💻">
+                        <label class="form-label">头像</label>
+                        <div class="avatar-field">
+                            <span class="avatar-preview" id="avatar-preview" aria-hidden="true"></span>
+                            <div class="avatar-field-body">
+                                <input type="text" class="form-input" id="profile-avatar" placeholder="Emoji（例如 👨‍💻）或图片地址" onchange="updateAvatarField(this.value)">
+                                <div class="avatar-field-actions">
+                                    <input type="file" id="avatar-file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
+                                    <button class="btn btn-secondary btn-small" onclick="document.getElementById('avatar-file').click()">+ 上传图片</button>
+                                    <button class="btn btn-secondary btn-small" onclick="clearAvatar()">清除</button>
+                                    <span class="field-note">上传后立即保存，不用再点下面的按钮</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">标题</label>
@@ -107,7 +132,7 @@
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label">个人简介（每段一行）</label>
-                        <textarea class="form-textarea" id="profile-about" rows="4" placeholder="每段一行。写成「教育背景：某某大学…」会渲染成一张带标题的卡片；不写冒号就是普通段落"></textarea>
+                        <textarea class="form-textarea" id="profile-about" rows="4" placeholder="每段一行。写成「在校经历：某某社团…」会把冒号前的小标题用强调色顶在段首；不写冒号就是普通段落"></textarea>
                         <div style="font-size:0.8rem;color:var(--text-tertiary);margin-top:0.4rem;">
                             技能相关的描述请填在下方「技能标签」各分类的说明框里，不要在这里重复一遍。
                         </div>
@@ -133,9 +158,14 @@
 
             <div class="form-section">
                 <div class="page-header" style="margin-bottom: 1rem;">
-                    <h2 class="page-title" style="font-size: 1.1rem;">社交链接</h2>
+                    <h2 class="page-title" style="font-size: 1.1rem;">联系方式</h2>
                     <button class="btn btn-secondary btn-small" onclick="addSocialLink()">+ 添加</button>
                 </div>
+                <p class="section-hint">
+                    前台左栏卡片按这里的顺序显示。名称随便写（知乎、B站、博客…），
+                    链接留空就只显示文字。传简历时会按名称合并 —— 简历里认出来的刷新地址，
+                    你自己加的行原样留着。
+                </p>
                 <div id="social-links-container"></div>
             </div>
 
@@ -189,12 +219,13 @@
             </div>
 
             <div class="form-section">
-                <div class="form-section-title">联系方式</div>
+                <div class="form-section-title">所在地</div>
+                <p class="section-hint">
+                    显示在左栏卡片的键值对里。邮箱 / 电话 / GitHub 这类链接型的联系方式
+                    统一在「个人信息 → 联系方式」里编辑，那儿可以随便加行。
+                </p>
                 <div class="form-grid">
-                    <div class="form-group"><label class="form-label">邮箱</label><input type="text" class="form-input" id="resume-email"></div>
-                    <div class="form-group"><label class="form-label">电话</label><input type="text" class="form-input" id="resume-phone"></div>
-                    <div class="form-group"><label class="form-label">所在地</label><input type="text" class="form-input" id="resume-location"></div>
-                    <div class="form-group"><label class="form-label">GitHub</label><input type="text" class="form-input" id="resume-github"></div>
+                    <div class="form-group"><input type="text" class="form-input" id="resume-location" placeholder="例如：成都"></div>
                 </div>
             </div>
 

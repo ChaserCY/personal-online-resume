@@ -377,6 +377,31 @@
             margin-bottom: 0.4rem;
         }
 
+        /* 头像字段：左边一个圆形预览，右边是输入框和按钮。
+           Emoji 和图片共用 profile.avatar 一个字段，填什么这里就预览什么。 */
+        .avatar-field { display: flex; gap: 0.9rem; align-items: flex-start; }
+        .avatar-preview {
+            flex: 0 0 56px; width: 56px; height: 56px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            font-size: 1.6rem; line-height: 1;
+            overflow: hidden;
+        }
+        .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+        .avatar-field-body { flex: 1; min-width: 0; }
+        .avatar-field-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+        .field-note { font-size: 0.78rem; color: var(--text-tertiary); }
+
+        /* 表单区块标题下面的一行小字说明，比 .form-hint 轻，不抢眼 */
+        .section-hint {
+            margin: -0.4rem 0 0.8rem;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            color: var(--text-tertiary);
+        }
+
         /* 面板顶部的说明条，例如「现在显示的是示例内容」 */
         .form-hint {
             margin-bottom: 1rem;

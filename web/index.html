@@ -40,13 +40,13 @@
 
     <nav class="topbar">
         <a href="#" class="logo" id="nav-logo">Online Resume</a>
-        <!-- 顺序跟着页面从上到下的板块走：关于我 → 技能 → 作品 → 视频。
+        <!-- 顺序跟着页面从上到下的板块走：关于我 → 作品 → 视频 → 技能。
              「管理」不是页面板块，是跳后台的，所以固定在最后。 -->
         <ul class="nav-links">
             <li><a href="#about">关于我</a></li>
-            <li><a href="#skills">技能</a></li>
             <li><a href="#games">作品</a></li>
             <li><a href="#videos">视频</a></li>
+            <li><a href="#skills">技能</a></li>
             <li><a href="./admin.html">管理</a></li>
         </ul>
         <button class="theme-toggle" onclick="toggleTheme()" aria-label="切换主题">
@@ -82,7 +82,6 @@
         </div>
         <div class="banner-inner">
             <span class="banner-tag" id="banner-tag"></span>
-            <h1 id="banner-title">您好，我是 <span></span></h1>
             <p id="banner-subtitle"></p>
             <a href="#about" class="banner-cta">了解更多</a>
         </div>
@@ -104,19 +103,19 @@
                 <div id="job-target" class="job-target"></div>
             </section>
 
-            <section class="block" id="skills">
-                <h2 class="block-title"><span>技能</span><i class="block-rule"></i><span class="block-num">02</span></h2>
-                <div class="skills-list" id="skills-grid"></div>
-            </section>
-
             <section class="block" id="games">
-                <h2 class="block-title"><span>游戏作品集</span><i class="block-rule"></i><span class="block-num">03</span></h2>
+                <h2 class="block-title"><span>游戏作品集</span><i class="block-rule"></i><span class="block-num">02</span></h2>
                 <div class="grid" id="games-grid"></div>
             </section>
 
             <section class="block" id="videos">
-                <h2 class="block-title"><span>视频展示</span><i class="block-rule"></i><span class="block-num">04</span></h2>
+                <h2 class="block-title"><span>视频展示</span><i class="block-rule"></i><span class="block-num">03</span></h2>
                 <div class="video-grid" id="videos-grid"></div>
+            </section>
+
+            <section class="block" id="skills">
+                <h2 class="block-title"><span>技能</span><i class="block-rule"></i><span class="block-num">04</span></h2>
+                <div class="skills-list" id="skills-grid"></div>
             </section>
         </main>
     </div>

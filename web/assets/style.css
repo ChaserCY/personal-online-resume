@@ -282,20 +282,10 @@
         }
         /* 数据里没这个字段时不渲染空壳子（main.js 赋空字符串就走这条） */
         .banner-tag:empty { display: none; }
-        #banner-title {
-            font-size: clamp(2.25rem, 5vw, 3.75rem);
-            font-weight: 800;
-            line-height: 1.15;
-            letter-spacing: -0.03em;
-            color: var(--text-primary);
-        }
-        /* 名字：用强调色，底下垫一条同色的粗下划线 */
-        #banner-title span {
-            color: var(--accent-primary);
-            border-bottom: 4px solid rgba(var(--accent-rgb), 0.3);
-        }
+        /* 横幅上「您好，我是 XXX」那个大标题已经去掉（名字在左栏卡里）。
+           和 .banner-cta 的 margin-top 对齐，标签 → 副标题 → 按钮 两段间距一样。 */
         #banner-subtitle {
-            margin-top: 1rem;
+            margin-top: 0.75rem;
             max-width: 620px;
             font-size: 1.05rem;
             color: var(--text-secondary);

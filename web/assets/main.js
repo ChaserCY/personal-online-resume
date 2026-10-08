@@ -66,9 +66,11 @@
             const p = siteData.profile || {};
             const r = siteData.resume || {};
 
-            // 横幅
+            // 横幅。以前这里还有一行「您好，我是 XXX」的大标题，去掉了 ——
+            // 名字在左栏个人卡里已经有了，横幅上再喊一遍是重复。
+            // 页面唯一的 <h1> 跟着挪到了那张卡的 .profile-name（见 renderProfileCard），
+            // 否则整页没有 h1，读屏器和搜索引擎都拿不到「这页讲的是谁」。
             document.title = p.name ? `${p.name} · 个人简历` : '个人简历 · 作品集';
-            document.getElementById('banner-title').innerHTML = `您好，我是 <span>${esc(p.name)}</span>`;
             document.getElementById('banner-subtitle').textContent = p.subtitle || '';
             // 小标签用「职位」，没填就退回求职意向里的岗位。赋空字符串时
             // CSS 的 .banner-tag:empty 会把整个标签收起来，不用在这里管显示隐藏。
@@ -183,7 +185,10 @@
                     ? `<div class="profile-avatar"><img src="${esc(p.avatar)}" alt="${esc(p.name || '')}"></div>`
                     : `<div class="profile-avatar">${esc(p.avatar)}</div>`;
             }
-            html += `<div class="profile-name">${esc(p.name)}</div>`;
+            // 这行是整页唯一的 <h1>（横幅上那个大标题去掉了，见 render()）。
+            // style.css 里的 * 重置了 margin，h1 的默认字号也被 .profile-name 盖住，
+            // 所以换成 h1 不会改变外观，只是把标题层级补回来。
+            html += `<h1 class="profile-name">${esc(p.name)}</h1>`;
             if (p.subtitle) html += `<p class="profile-subtitle">${esc(p.subtitle)}</p>`;
 
             // 联系方式：图标 + 值直接显示，不做点击展开。左栏空间够，
